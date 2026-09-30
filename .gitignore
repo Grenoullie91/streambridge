@@ -1,0 +1,40 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Local configuration and secrets.
+#
+# These must never be committed: a real config.toml can name a browser to read
+# cookies from, and a local override may embed machine-specific paths.
+config.local.toml
+.env
+*.local.toml
+cookies.txt
+
+# Anything that looks like a credential, as a second line of defence behind the
+# privacy audit. See docs/security.md.
+secrets.*
+*.pem
+*.key
+*.p12
+*.keystore

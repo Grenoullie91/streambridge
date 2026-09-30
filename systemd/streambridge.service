@@ -1,0 +1,65 @@
+[Unit]
+Description=StreamBridge local streaming bridge (search -> MPD)
+Documentation=man:streambridge-server(1)
+# Network access is needed to resolve sources, so start after it is up.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+# Adjust if you installed somewhere other than ~/.local/bin, or if you run
+# from a checkout: ExecStart=/path/to/checkout/.venv/bin/streambridge-server
+ExecStart=%h/.local/bin/streambridge-server
+Restart=on-failure
+RestartSec=5
+
+# Loopback only. This is a safety net; the server itself refuses any
+# non-loopback bind address.
+Environment=STREAMBRIDGE_HOST=127.0.0.1
+Environment=STREAMBRIDGE_PORT=8787
+Environment=STREAMBRIDGE_LOG_LEVEL=INFO
+
+# Optional: uncomment if searches start failing with a bot check.
+# Environment=STREAMBRIDGE_COOKIES_FROM_BROWSER=firefox
+
+# A user unit already runs as the invoking user. Setting User= here is
+# rejected by systemd (216/GROUP), so it is deliberately absent.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+# Writable paths. The cache is throw-away by design.
+#
+# MPD's playlist_directory MUST be writable here: MPD refuses a playlist load
+# from anywhere else, and that is how a queued track keeps its title in
+# ncmpcpp instead of showing a bare URL. If queuing fails with "Access denied",
+# add your mpd.conf playlist_directory here.
+ReadWritePaths=%h/.cache/streambridge %h/.local/state/streambridge %h/playlists
+
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+# MemoryDenyWriteExecute must stay false: the extractor binary needs to be
+# executable, and some Python extension modules map memory as executable.
+MemoryDenyWriteExecute=false
+
+# Only what a local helper needs: no outbound access except TCP, no privileges.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Bound resource usage. TasksMax leaves room for the thread that serves each
+# audio stream to MPD, plus the extractor's child processes.
+MemoryMax=512M
+TasksMax=128
+
+[Install]
+WantedBy=default.target

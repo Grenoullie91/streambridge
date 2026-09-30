@@ -1,0 +1,81 @@
+# StreamBridge example configuration
+#
+# Copy to $XDG_CONFIG_HOME/streambridge/config.toml and edit as needed.
+# Every key below is optional: the defaults work on a fresh install, so delete
+# whatever you do not want to change.
+#
+# Precedence, lowest to highest:
+#   1. these built-in defaults
+#   2. this file
+#   3. STREAMBRIDGE_* environment variables
+#   4. command line flags
+#
+# Unknown sections and unknown keys are rejected with the offending name, so a
+# typo fails loudly at startup instead of being silently ignored.
+
+# ----------------------------------------------------------------- [server]
+[server]
+# Loopback only. The server refuses to start on any other address; this key
+# exists so the refusal has a clear, configured source.
+host = "127.0.0.1"
+port = 8787
+
+# ----------------------------------------------------------------- [search]
+[search]
+# Default number of results. 1..100.
+limit = 20
+# Local request budget per minute. This guards against accidental request
+# storms, not normal listening. Raise it if you script bulk lookups.
+rate_per_min = 30
+# Separate budget for stream resolution, so a burst of searches cannot exhaust
+# the playback budget.
+resolve_rate_per_min = 60
+
+# --------------------------------------------------------------- [timeouts]
+[timeouts]
+# Every external call is bounded. A hung process can never block the server.
+request = 20.0
+resolve = 30.0
+info = 20.0
+
+# ----------------------------------------------------------------- [cache]
+[cache]
+# Search results and metadata only. Media URLs are never written to disk.
+# A leading ~ is expanded. Defaults to $XDG_CACHE_HOME/streambridge, or
+# ~/.cache/streambridge when XDG_CACHE_HOME is unset.
+directory = "~/.cache/streambridge"
+# Seconds. 0 disables expiry.
+ttl_seconds = 300.0
+# Bound on the in-memory cache; the disk cache is pruned to the same size.
+max_entries = 200
+
+# -------------------------------------------------------------------- [mpd]
+[mpd]
+host = "127.0.0.1"
+port = 6600
+
+# MPD only accepts a playlist load from its own playlist_directory, and it
+# wants a bare name without the .m3u suffix. StreamBridge writes the generated
+# playlist there.
+#
+# Leave this unset to auto-detect (mpc paths, then the cache directory). Set it
+# explicitly if queuing fails with "Access denied" - the value must match
+# playlist_directory in your mpd.conf.
+# playlist_directory = "~/playlists"
+
+# --------------------------------------------------------------- [youtube]
+[youtube]
+# The extractor binary. Any command that speaks yt-dlp's command line
+# interface can be substituted here.
+extractor_path = "yt-dlp"
+
+# Optional. Only needed when the upstream service challenges anonymous
+# requests ("Sign in to confirm you're not a bot"). StreamBridge passes the
+# browser name as a separate argument and never reads the cookies itself, but
+# note that this makes your logged-in session available to the extractor.
+# cookies_from_browser = "firefox"
+
+# --------------------------------------------------------------- [logging]
+[logging]
+# DEBUG, INFO, WARNING or ERROR. Logs go to stderr and are redacted.
+level = "INFO"

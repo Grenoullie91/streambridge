@@ -1,0 +1,26 @@
+Blank issues are closed. Please use a template:
+
+- [Bug report](https://github.com/OWNER/streambridge/issues/new/choose)
+- [Feature request](https://github.com/OWNER/streambridge/issues/new/choose)
+
+## Before you file
+
+1. Search the closed issues. Most reports are duplicates of something already
+   fixed or explained in [docs/troubleshooting.md](docs/troubleshooting.md).
+2. Run `streambridge doctor`. It answers most environment questions.
+3. Read the log:
+   ```bash
+   journalctl --user -u streambridge --since "-10min" --no-pager
+   ```
+   The output is already redacted, so it is safe to paste, but read it first.
+
+## What makes a report actionable
+
+Include the output of `streambridge doctor`, the version from
+`streambridge --version`, and the exact commands you ran. A report without
+those is usually a conversation instead of a fix.
+
+## Security
+
+Do not open a public issue for a vulnerability. Use the repository's private
+security advisory instead. See [docs/security.md](docs/security.md).

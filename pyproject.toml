@@ -1,0 +1,131 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "streambridge"
+version = "0.1.0"
+description = "Privacy-first local bridge for online music search and MPD playback"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+keywords = ["mpd", "music", "ncmpcpp", "yt-dlp", "streaming", "self-hosted"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Multimedia :: Sound/Audio :: Players",
+]
+# No runtime dependencies: the HTTP server, the TOML config and the CLI all
+# come from the standard library. Everything heavy is delegated to yt-dlp and
+# to MPD, which the user already runs.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "pytest-cov>=4.1",
+  "pytest-timeout>=2.2",
+  "ruff>=0.6",
+  "mypy>=1.11",
+]
+
+[project.scripts]
+streambridge = "streambridge.cli:main"
+streambridge-server = "streambridge.server:main"
+
+[project.urls]
+Documentation = "https://github.com/OWNER/streambridge/blob/main/README.md"
+Issues = "https://github.com/OWNER/streambridge/issues"
+Source = "https://github.com/OWNER/streambridge"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/streambridge"]
+
+[tool.pytest.ini_options]
+minversion = "7.4"
+testpaths = ["tests"]
+# Run against the checkout without requiring an editable install.
+pythonpath = ["src"]
+# -p no:cacheprovider keeps the working tree clean, which matters for a
+# repository that must be publishable as-is. No --timeout: that needs
+# pytest-timeout, which is optional here so a bare `pytest` works. The
+# autouse socket timeout in conftest.py covers the hang risk instead.
+#
+# -m 'not live' deselects the live tests: they need network access and
+# upstream rate limits apply. Run them explicitly with `-m live`.
+addopts = "-q --strict-markers -p no:cacheprovider -m 'not live'"
+markers = [
+  "unit: pure logic, no filesystem or network beyond tmp_path",
+  "integration: exercises the HTTP server or CLI over a real socket",
+  "live: contacts the upstream service; opt in with -m live",
+]
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+source = ["streambridge"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # isort
+  "N",    # pep8-naming
+  "UP",   # pyupgrade
+  "B",    # flake8-bugbear
+  "A",    # flake8-builtins
+  "S",    # flake8-bandit
+  "C4",   # flake8-comprehensions
+  "SIM",  # flake8-simplify
+  "RUF",  # ruff-specific
+]
+ignore = [
+  "S101",  # assert is fine in tests and internal invariants
+  "A002",  # `id` shadowing is a deliberate API choice here
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately use hostile values (public bind addresses, loopback URLs,
+# literal secrets as fixtures) and swallow exceptions when a worker thread is
+# expected to fail.
+"tests/**" = ["S104", "S105", "S106", "S108", "S110", "S310", "SIM105", "SIM117", "B017"]
+"scripts/**" = ["S103"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["streambridge"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src/streambridge"]
+strict = true
+warn_unreachable = true
+disallow_any_generics = true
+# urllib and subprocess hand back loosely typed structures; the code validates
+# every value at runtime instead of asserting types it cannot guarantee.
+disallow_untyped_calls = false
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["streambridge.cli", "streambridge.server", "streambridge.health"]
+disallow_untyped_defs = false

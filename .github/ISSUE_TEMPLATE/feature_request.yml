@@ -1,0 +1,50 @@
+name: Feature request
+description: Suggest a change to StreamBridge
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: |
+        Describe the situation you are in, not the solution you have in mind.
+        A problem statement makes it possible to solve it a different way.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like to happen
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - CLI
+        - HTTP API
+        - MPD integration
+        - Configuration
+        - Documentation
+        - Packaging and installation
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints
+      options:
+        - label: This can be done without a new Python dependency.
+        - label: This keeps the service loopback-only and free of a URL-accepting endpoint.
+          required: true
+        - label: This does not require persisting media URLs anywhere.
