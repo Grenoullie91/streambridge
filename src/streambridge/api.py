@@ -232,6 +232,17 @@ class ApiHandler(BaseHTTPRequestHandler):
     sys_version = ""  # never advertise the interpreter build
     protocol_version = "HTTP/1.1"
 
+    # Seconds a client may hold a connection without sending a request.
+    #
+    # socketserver applies this to the request socket, so a client that connects
+    # and then goes quiet is dropped instead of pinning a thread and its buffer
+    # forever. Without it this handler is the only unbounded resource in the
+    # server: the upstream side is already bounded by SOCKET_TIMEOUT.
+    #
+    # Generous on purpose. A large proxied stream is a long-lived response, and
+    # this bounds the gap *between* requests, not the transfer itself.
+    timeout = 30.0
+
     service: ApiService  # injected by make_server
     quiet: bool = True
 

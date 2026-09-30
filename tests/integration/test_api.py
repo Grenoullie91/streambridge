@@ -242,6 +242,70 @@ class TestStream:
         assert "message" in payload
 
 
+class TestResourceBounds:
+    """Every request-side resource must be bounded, not just the upstream one."""
+
+    def test_handler_declares_a_socket_timeout(self) -> None:
+        # The real guard. Without a timeout here, a client that connects and
+        # then goes quiet pins a thread and its buffer for as long as it likes,
+        # and this is the only place in the server with no bound.
+        from streambridge.api import ApiHandler
+
+        assert ApiHandler.timeout is not None
+        assert 0 < ApiHandler.timeout <= 120
+
+    def test_socketserver_applies_the_declared_timeout(
+        self, config: Config, fake_runner: FakeRunner
+    ) -> None:
+        """Verify the mechanism: socketserver drops a stalled connection.
+
+        This sets the attribute itself, so it proves the plumbing works rather
+        than that the default is set - that is the assertion above. Together
+        they are the guarantee; either alone would be easy to fool.
+        """
+        import socket
+        import threading
+        import time
+        from dataclasses import replace as dc_replace
+
+        fake_runner.add_json("ytsearch", SEARCH_PAYLOAD)
+        fake_runner.add_json("watch?v=", INFO_PAYLOAD)
+        client = ExtractorClient(config, runner=fake_runner, executable="yt-dlp")
+        service = ApiService(config, client=client, resolver=StreamResolver(config, client))
+        server = make_server(dc_replace(config, port=0), service=service)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.server_address[1]
+        handler = server.RequestHandlerClass
+        original = handler.timeout
+        try:
+            handler.timeout = 1.0
+            sock = socket.create_connection(("127.0.0.1", port), timeout=10)
+            # Headers without the terminating blank line: an incomplete request.
+            sock.sendall(b"GET /health HTTP/1.1\r\nHost: x\r\n")
+            begin = time.monotonic()
+            sock.settimeout(8)
+            try:
+                data = sock.recv(4096)
+            except OSError:
+                data = b""
+            elapsed = time.monotonic() - begin
+            sock.close()
+            # The server gave up on us rather than answering or waiting.
+            assert data == b"", f"expected the server to close, got {data[:80]!r}"
+            assert elapsed < 8, f"connection held for {elapsed:.1f}s"
+        finally:
+            handler.timeout = original
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_normal_requests_still_complete(self, harness: Harness) -> None:
+        # The timeout must not truncate ordinary request handling.
+        assert harness.get("/health")[0] == 200
+        assert harness.get("/stats")[0] == 200
+
+
 class TestSecurity:
     def test_no_open_proxy_endpoint(self, harness: Harness) -> None:
         # No endpoint may take an arbitrary URL.

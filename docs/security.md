@@ -39,6 +39,8 @@ Every external program is started through `proc.py`:
 | Resource | Bound |
 |---|---|
 | External call duration | `[timeouts]` in config, default 20s |
+| Upstream socket | 20s, every read and connect |
+| Client socket idle | 30s, set on the HTTP handler |
 | Retry attempts | 3, and only for transient failures |
 | Process survival on timeout | killed by process group, including children |
 | Memory cache | `cache.max_entries`, LRU |
@@ -46,6 +48,12 @@ Every external program is started through `proc.py`:
 | Resolver lock table | 512, pruned |
 | Server memory | `MemoryMax=512M` in the shipped unit |
 | Server tasks | `TasksMax=128` in the shipped unit |
+
+The client socket timeout closes the last unbounded resource. Without it, a
+local client that connects and then goes quiet holds a thread and its buffer
+for as long as it likes; with it, `socketserver` drops the connection after 30
+seconds. It bounds the gap *between* requests, not a transfer, so a long
+proxied stream is unaffected.
 
 ## Privacy
 
