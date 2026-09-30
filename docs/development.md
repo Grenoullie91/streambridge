@@ -13,6 +13,11 @@ dev dependencies. **The runtime has no third-party dependencies** — the daemon
 and the CLI use only the standard library — so the dev extras are all tooling,
 never something a user installs.
 
+`scripts/install.sh` takes a `--dev` flag for the same thing, and only
+`--dev` puts pytest in the virtual environment. If `make test` reports a
+missing pytest, that is what happened: a plain `install.sh` overwrote the
+development environment with a runtime-only one.
+
 ```console
 $ make doctor     # is yt-dlp, mpc and MPD where they should be
 $ make verify     # the full gate; this is what CI runs

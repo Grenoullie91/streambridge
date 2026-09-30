@@ -1,5 +1,21 @@
 # Installation
 
+## Install
+
+```console
+$ ./scripts/install.sh            # runtime only: the daemon and the CLI
+$ ./scripts/install.sh --dev      # additionally pytest, ruff and mypy
+$ ./scripts/uninstall.sh --yes    # remove it again
+```
+
+The dev extras are opt-in on purpose. A working install should not carry a
+test framework, and the project has no runtime dependencies at all, so a
+runtime-only install pulls in nothing beyond Python itself.
+
+If you plan to work on StreamBridge rather than just run it, use `--dev` or
+`make setup`: `scripts/verify.sh` and `make test` need pytest, and it will tell
+you so rather than failing obscurely.
+
 ## Requirements
 
 | Component | Needed for | Minimum |

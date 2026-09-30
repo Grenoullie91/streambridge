@@ -29,13 +29,28 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 
-# Writable paths. The cache is throw-away by design.
+# Writable paths. The cache is throw-away by design; the state directory holds
+# favourites and history.
 #
-# MPD's playlist_directory MUST be writable here: MPD refuses a playlist load
-# from anywhere else, and that is how a queued track keeps its title in
-# ncmpcpp instead of showing a bare URL. If queuing fails with "Access denied",
-# add your mpd.conf playlist_directory here.
-ReadWritePaths=%h/.cache/streambridge %h/.local/state/streambridge %h/playlists
+# Both must already exist. A ReadWritePaths entry for a missing directory
+# makes the unit fail to start with 226/NAMESPACE before a single line of
+# Python runs, and scripts/install.sh creates them for that reason.
+#
+# StateDirectory=/CacheDirectory= are deliberately NOT used: on this systemd
+# they make a user unit symlink ~/.local/state/<name> at ~/.config/<name>,
+# which quietly moves a user's listening history into their configuration
+# directory. The XDG separation is worth more than the automatic creation.
+ReadWritePaths=%h/.cache/streambridge %h/.local/state/streambridge
+
+# MPD's playlist_directory must be writable too: MPD refuses a playlist load
+# from anywhere else, and that load is how a queued track keeps its title in
+# ncmpcpp instead of showing a bare URL. It lives in a machine-specific place,
+# so it cannot be listed here. scripts/install.sh detects it and writes
+# ~/.config/systemd/user/streambridge.service.d/playlist-dir.conf. If queuing
+# fails with "Access denied" and that file is missing, add it yourself:
+#
+#   [Service]
+#   ReadWritePaths=/path/from/your/mpd.conf/playlists
 
 ProtectKernelTunables=true
 ProtectKernelModules=true
