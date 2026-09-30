@@ -34,6 +34,7 @@ DEFAULT_CACHE_MAX_ENTRIES = 200
 DEFAULT_SEARCH_RATE_PER_MIN = 30
 DEFAULT_RESOLVE_RATE_PER_MIN = 60
 DEFAULT_LOG_LEVEL = "INFO"
+DEFAULT_VOLUME = 80
 
 VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 
@@ -66,6 +67,27 @@ def default_cache_dir() -> Path:
     return cache_home() / "streambridge"
 
 
+def default_state_dir() -> Path:
+    """Persistent state directory (favourites, play history).
+
+    Kept apart from the cache on purpose: the cache may be discarded at any
+    time, and a user's favourites must survive that.
+    """
+    return state_home() / "streambridge"
+
+
+def default_web_dir() -> Path | None:
+    """Directory holding the bundled web UI, or None when it is missing.
+
+    The assets ship inside the package, so the location is derived from
+    ``__file__`` rather than configured: there is no supported way to point
+    it elsewhere, which keeps the static file server free of user-controlled
+    roots. ``web_directory`` exists for unusual layouts (a distro package
+    that splits files across directories).
+    """
+    return Path(__file__).resolve().parent / "web"
+
+
 @dataclass(frozen=True, slots=True)
 class Config:
     """Validated runtime configuration. All defaults are generic."""
@@ -87,6 +109,12 @@ class Config:
     cache_directory: Path = field(default_factory=default_cache_dir)
     cache_ttl_seconds: float = DEFAULT_CACHE_TTL_SECONDS
     cache_max_entries: int = DEFAULT_CACHE_MAX_ENTRIES
+    # [library] persistent user data: favourites and play history.
+    state_directory: Path = field(default_factory=default_state_dir)
+    # [server] bundled web assets. None disables the UI.
+    web_directory: Path | None = field(default_factory=default_web_dir)
+    # [player] fallback until MPD reports a volume of its own.
+    default_volume: int = DEFAULT_VOLUME
     # [mpd]
     mpd_host: str = DEFAULT_MPD_HOST
     mpd_port: int = DEFAULT_MPD_PORT
@@ -102,6 +130,12 @@ class Config:
     @property
     def base_url(self) -> str:
         return f"http://{self.host}:{self.port}"
+
+    @property
+    def web_enabled(self) -> bool:
+        """True when the bundled web UI is present on disk."""
+        directory = self.web_directory
+        return directory is not None and (Path(directory) / "index.html").is_file()
 
     def stream_url(self, video_id: str) -> str:
         return f"{self.base_url}/stream/{video_id}"
@@ -141,6 +175,7 @@ _SCHEMA: dict[str, dict[str, Any]] = {
     "server": {
         "host": ("host", _as_str),
         "port": ("port", _as_int),
+        "web_directory": ("web_directory", _as_path),
     },
     "search": {
         "limit": ("search_limit", _as_int),
@@ -156,6 +191,12 @@ _SCHEMA: dict[str, dict[str, Any]] = {
         "directory": ("cache_directory", _as_path),
         "ttl_seconds": ("cache_ttl_seconds", _as_float),
         "max_entries": ("cache_max_entries", _as_int),
+    },
+    "library": {
+        "directory": ("state_directory", _as_path),
+    },
+    "player": {
+        "default_volume": ("default_volume", _as_int),
     },
     "mpd": {
         "host": ("mpd_host", _as_str),
@@ -231,6 +272,10 @@ def validate_config(config: Config) -> Config:
         raise ConfigError("cache.ttl_seconds must not be negative")
     if config.cache_max_entries < 1:
         raise ConfigError("cache.max_entries must be at least 1")
+    if not 0 <= config.default_volume <= 100:
+        raise ConfigError(
+            f"player.default_volume must be between 0 and 100, got {config.default_volume}"
+        )
     if config.log_level.upper() not in VALID_LOG_LEVELS:
         raise ConfigError(
             f"logging.level must be one of {', '.join(VALID_LOG_LEVELS)}, got {config.log_level!r}"
@@ -255,6 +300,9 @@ _ENV_MAP: dict[str, tuple[str, Any, str]] = {
     "STREAMBRIDGE_INFO_TIMEOUT": ("info_timeout", _as_float, "timeouts.info"),
     "STREAMBRIDGE_CACHE_DIR": ("cache_directory", _as_path, "cache.directory"),
     "STREAMBRIDGE_CACHE_TTL": ("cache_ttl_seconds", _as_float, "cache.ttl_seconds"),
+    "STREAMBRIDGE_STATE_DIR": ("state_directory", _as_path, "library.directory"),
+    "STREAMBRIDGE_WEB_DIR": ("web_directory", _as_path, "server.web_directory"),
+    "STREAMBRIDGE_DEFAULT_VOLUME": ("default_volume", _as_int, "player.default_volume"),
     "STREAMBRIDGE_MPD_HOST": ("mpd_host", _as_str, "mpd.host"),
     "STREAMBRIDGE_MPD_PORT": ("mpd_port", _as_int, "mpd.port"),
     "STREAMBRIDGE_PLAYLIST_DIR": ("playlist_directory", _as_path, "mpd.playlist_directory"),

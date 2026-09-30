@@ -28,9 +28,41 @@ from .proc import CommandRunner, SubprocessRunner, which
 log = logging.getLogger("streambridge.mpd")
 
 # Metadata is injected through a temporary EXTM3U playlist.
-_ILLEGAL_IN_TAG = re.compile(r"[\r\n\"]")
+# Tabs are stripped as well: :meth:`MpdClient.queue` parses one tab-separated
+# ``mpc -f`` line per song, and a tab inside a title would shift every later
+# column.
+_ILLEGAL_IN_TAG = re.compile(r"[\r\n\t\"]")
 
 DEFAULT_TIMEOUT = 20.0
+
+# Field separator for the machine-readable queue dump. _clean_tag guarantees
+# it can never occur inside a value.
+_QUEUE_SEP = "\t"
+# Layout: position, MPD song id, duration, file/URL, display name.
+_QUEUE_FORMAT = _QUEUE_SEP.join(("%position%", "%id%", "%time%", "%file%", "%name%"))
+
+# mpc renders times as M:SS or H:MM:SS.
+_DURATION_RE = re.compile(r"^(\d+):([0-5]?\d)(?::([0-5]?\d))?$")
+
+
+def parse_mpd_time(value: str | None) -> int | None:
+    """Parse an mpc ``M:SS`` / ``HH:MM:SS`` string into whole seconds.
+
+    Returns None for anything unparseable, including the placeholders mpc
+    prints when MPD does not know a duration.
+    """
+    if not value:
+        return None
+    text = value.strip()
+    if text.startswith("-"):  # MPD reports -1 for "unknown"
+        return None
+    match = _DURATION_RE.match(text)
+    if not match:
+        return None
+    first, second, third = match.groups()
+    if third is None:
+        return int(first) * 60 + int(second)
+    return int(first) * 3600 + int(second) * 60 + int(third)
 
 
 def clean_tag(value: str) -> str:
@@ -57,28 +89,94 @@ class MpdStatus:
     repeat: bool = False
     random: bool = False
     volume: str | None = None
+    single: bool = False
+    consume: bool = False
+    song_id: int | None = None
+    length: int | None = None
+
+    @property
+    def state(self) -> str:
+        """Normalised state word: ``playing``, ``paused`` or ``stopped``."""
+        if self.playing:
+            return "playing"
+        if self.paused:
+            return "paused"
+        return "stopped"
+
+    @property
+    def position(self) -> int | None:
+        """1-based queue position of the current song, if any."""
+        return int(self.track.lstrip("#")) if self.track and self.track.startswith("#") else None
+
+    @property
+    def elapsed_seconds(self) -> int | None:
+        return parse_mpd_time(self.elapsed)
+
+    @property
+    def total_seconds(self) -> int | None:
+        return parse_mpd_time(self.total)
+
+    @property
+    def volume_percent(self) -> int | None:
+        if not self.volume:
+            return None
+        try:
+            value = int(float(self.volume.strip().rstrip("%").strip()))
+        except ValueError:
+            return None
+        return max(0, min(100, value))
 
     def to_dict(self) -> dict[str, object]:
         return {
             "raw": self.raw,
+            "state": self.state,
             "playing": self.playing,
             "paused": self.paused,
             "stopped": self.stopped,
             "track": self.track,
+            "position": self.position,
+            "song_id": self.song_id,
+            "length": self.length,
             "elapsed": self.elapsed,
             "total": self.total,
+            "elapsed_seconds": self.elapsed_seconds,
+            "total_seconds": self.total_seconds,
             "repeat": self.repeat,
             "random": self.random,
+            "single": self.single,
+            "consume": self.consume,
             "volume": self.volume,
+            "volume_percent": self.volume_percent,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class QueueEntry:
+    """One song in the MPD queue, as reported by ``mpc -f``."""
+
+    position: int
+    song_id: int
+    file: str
+    name: str
+    duration: int | None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "position": self.position,
+            "song_id": self.song_id,
+            "file": self.file,
+            "name": self.name,
+            "duration": self.duration,
         }
 
 
 # mpc renders the state line as:  [playing] #3  0:42/4:09 (17%)
 # The state tag is bracketed; the song position follows it as "#N".
 _STATE_RE = re.compile(r"\[(playing|paused|stopped)\]")
-_SONG_RE = re.compile(r"\[(?:playing|paused|stopped)\]\s*(#[0-9]+)")
+_SONG_RE = re.compile(r"\[(?:playing|paused|stopped)\]\s*#(\d+)(?:/(\d+))?")
 _TIME_RE = re.compile(r"(\d+:\d+(?::\d+)?)\s*/\s*(\d+:\d+(?::\d+)?)")
 _VOLUME_RE = re.compile(r"^volume:\s*(\S+)", re.MULTILINE)
+_SONGID_RE = re.compile(r"^song:\s*(\d+)", re.MULTILINE)
 
 
 class MpdClient:
@@ -163,18 +261,56 @@ class MpdClient:
         song = _SONG_RE.search(raw)
         times = _TIME_RE.search(raw)
         volume = _VOLUME_RE.search(raw)
+        song_id = _SONGID_RE.search(raw)
         return MpdStatus(
             raw=raw.strip(),
             playing="[playing]" in raw,
             paused="[paused]" in raw,
             stopped="[stopped]" in raw,
-            track=song.group(1) if song else None,
+            track=f"#{song.group(1)}" if song else None,
             elapsed=times.group(1) if times else None,
             total=times.group(2) if times else None,
             repeat="repeat: on" in raw,
             random="random: on" in raw,
             volume=volume.group(1) if volume else None,
+            single="single: on" in raw,
+            consume="consume: on" in raw,
+            song_id=int(song_id.group(1)) if song_id else None,
+            length=int(song.group(2)) if song and song.group(2) else None,
         )
+
+    def queue(self) -> list[QueueEntry]:
+        """Return the queue as structured entries.
+
+        Uses ``mpc -f`` so the result is machine-readable instead of the
+        two-line-per-song human layout. Unparseable lines are skipped rather
+        than raising: a display quirk in a future mpc must not break the API.
+        """
+        raw = self._run([*self._args(), "--format", _QUEUE_FORMAT, "playlist"], timeout=30.0)
+        entries: list[QueueEntry] = []
+        for line in raw.splitlines():
+            if not line.strip():
+                continue
+            parts = line.split(_QUEUE_SEP)
+            if len(parts) < 4:
+                continue
+            try:
+                position = int(parts[0])
+                song_id = int(parts[1])
+            except ValueError:
+                continue
+            if position < 1:
+                continue
+            entries.append(
+                QueueEntry(
+                    position=position,
+                    song_id=song_id,
+                    file=parts[3].strip(),
+                    name=(_QUEUE_SEP.join(parts[4:]) if len(parts) > 4 else "").strip(),
+                    duration=parse_mpd_time(parts[2]),
+                )
+            )
+        return entries
 
     def playlist(self) -> str:
         return self._run(self._args("playlist"))
@@ -215,6 +351,31 @@ class MpdClient:
 
     def stop(self) -> str:
         return self._run(self._args("stop"))
+
+    # -- transport -----------------------------------------------------
+    def seek(self, seconds: float) -> str:
+        """Seek the current song to an absolute offset in seconds."""
+        return self._run(self._args("seek", str(max(0, int(seconds)))))
+
+    def volume(self, percent: int) -> str:
+        """Set the output volume, 0-100."""
+        return self._run(self._args("volume", str(max(0, min(100, int(percent))))))
+
+    def _toggle(self, name: str, on: bool) -> str:
+        return self._run(self._args(name, "on" if on else "off"))
+
+    def repeat(self, on: bool) -> str:
+        return self._toggle("repeat", on)
+
+    def random(self, on: bool) -> str:
+        return self._toggle("random", on)
+
+    def single(self, on: bool) -> str:
+        """Repeat-one mode: play the current song until told otherwise."""
+        return self._toggle("single", on)
+
+    def consume(self, on: bool) -> str:
+        return self._toggle("consume", on)
 
     # -- playlist metadata ---------------------------------------------
     def playlist_dir(self) -> Path:

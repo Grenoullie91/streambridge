@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Iterator
 from dataclasses import replace
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -304,6 +304,62 @@ class TestResourceBounds:
         # The timeout must not truncate ordinary request handling.
         assert harness.get("/health")[0] == 200
         assert harness.get("/stats")[0] == 200
+
+    def test_stream_survives_a_client_that_stops_reading(
+        self, harness: Harness, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A stalled player must end the relay quietly, not as a crash.
+
+        The handler timeout now applies to writes, so it can fire in the middle
+        of a proxied stream. That is a normal ending, not an error, and must
+        not surface as a traceback.
+        """
+        from conftest import make_stream_info
+        from streambridge.api import ApiHandler
+
+        response = _StallingResponse()
+        monkeypatch.setattr("streambridge.api.open_with_headers", lambda *a, **k: response)
+        monkeypatch.setattr("streambridge.api.iter_chunks", lambda src: iter([b"x" * 1024] * 4))
+        # Drive the relay with a socket that fails on write, standing in for a
+        # client that stopped reading.
+        handler = ApiHandler.__new__(ApiHandler)
+        sent: list[tuple[int, str]] = []
+
+        def send_response_only(code: int, message: str | None = None) -> None:
+            sent.append((code, message or ""))
+
+        handler.send_response = send_response_only  # type: ignore[method-assign]
+        handler.send_header = lambda *a, **k: None  # type: ignore[method-assign]
+        handler.end_headers = lambda: None  # type: ignore[method-assign]
+        handler.headers = {}
+        handler.wfile = _FailingWriter()
+        ApiHandler._relay(handler, response, make_stream_info())
+        # Reaching this point without an exception is the assertion: an
+        # unhandled socket error would have propagated.
+        assert sent
+
+
+class _StallingResponse:
+    """Minimal upstream response for the relay test."""
+
+    status = 200
+    headers: ClassVar[dict[str, str]] = {
+        "Content-Type": "audio/mp4",
+        "Content-Length": "4096",
+    }
+
+    def getcode(self) -> int:
+        return 200
+
+    def close(self) -> None:
+        pass
+
+
+class _FailingWriter:
+    """A socket writer whose writes always time out."""
+
+    def write(self, _data: bytes) -> None:
+        raise TimeoutError("client stopped reading")
 
 
 class TestSecurity:
