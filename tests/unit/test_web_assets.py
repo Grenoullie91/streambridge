@@ -294,3 +294,46 @@ def test_web_dir_can_be_overridden(tmp_path: Path) -> None:
     assert Config().web_enabled is True
     assert replace(Config(), web_directory=tmp_path).web_enabled is False
     assert replace(Config(), web_directory=None).web_enabled is False
+
+
+class TestNoHtmlInjectionSink:
+    """The UI must have exactly one innerHTML, and it must take a constant.
+
+    An upstream title is attacker-controlled: anyone can publish a video whose
+    title is a payload, and that title is rendered in the search results, the
+    queue and the now-playing bar. So text has to reach the DOM as text.
+
+    The single permitted innerHTML is the SVG icon builder, whose argument is
+    an ICON constant. This test exists so that adding a second one is a
+    deliberate act with a reason attached, rather than something the next
+    contributor does to render a bold title.
+    """
+
+    def test_only_the_icon_builder_uses_innerhtml(self) -> None:
+        assert WEB is not None
+        source = (WEB / "app.js").read_text(encoding="utf-8")
+        code_lines = [
+            line
+            for line in source.splitlines()
+            if "innerHTML" in line and not line.lstrip().startswith(("*", "//"))
+        ]
+        assert len(code_lines) == 1, f"unexpected innerHTML use: {code_lines}"
+        assert "svg.innerHTML = paths" in code_lines[0]
+
+    def test_the_element_helper_has_no_html_key(self) -> None:
+        assert WEB is not None
+        source = (WEB / "app.js").read_text(encoding="utf-8")
+        assert "node.innerHTML" not in source
+
+    def test_text_is_set_through_textcontent(self) -> None:
+        assert WEB is not None
+        source = (WEB / "app.js").read_text(encoding="utf-8")
+        assert "node.textContent = String(value)" in source
+
+    def test_the_ui_does_not_eval(self) -> None:
+        # eval would need 'unsafe-eval' in the CSP, which the server does not
+        # send. Together the two must agree, or the UI silently stops working.
+        assert WEB is not None
+        source = (WEB / "app.js").read_text(encoding="utf-8")
+        for dangerous in ("eval(", "new Function("):
+            assert dangerous not in source

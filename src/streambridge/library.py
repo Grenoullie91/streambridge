@@ -167,7 +167,7 @@ class _JsonFile:
                 with self._path.open("r", encoding="utf-8") as handle:
                     data = json.load(handle)
             except (OSError, json.JSONDecodeError, ValueError) as exc:
-                log.warning("Bibliotheksdatei %s nicht lesbar: %s", self._path, exc)
+                log.warning("Library file %s is not readable: %s", self._path, exc)
                 return {}
         if not isinstance(data, dict):
             return {}
@@ -192,7 +192,7 @@ class _JsonFile:
             except OSError as exc:
                 # Persistence is a convenience, never a hard requirement:
                 # a read-only home directory must not break playback.
-                log.warning("Bibliothek nicht schreibbar (%s): %s", self._path, exc)
+                log.warning("Library is not writable (%s): %s", self._path, exc)
 
 
 class LibraryStore:

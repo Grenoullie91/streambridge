@@ -129,7 +129,7 @@ class PlayerService:
         if known is not None:
             return known
         if self._api is None:  # pragma: no cover - always wired in production
-            raise MpdError("Metadaten sind derzeit nicht verfügbar.")
+            raise MpdError("Metadata is not available right now.")
         return self._api.track(vid)
 
     # -- queue ----------------------------------------------------------
@@ -170,7 +170,7 @@ class PlayerService:
             self.remember([track])
         except Exception as exc:
             # Unavailable videos stay unresolved; the UI falls back to the id.
-            log.debug("Metadaten für %s nicht nachladbar: %s", video_id, exc)
+            log.debug("Metadata for %s could not be loaded later: %s", video_id, exc)
         finally:
             self._enrich_slots.release()
             self._pending.discard(video_id)
@@ -289,7 +289,7 @@ class PlayerService:
             )
             self.library.record_play(track)
         except Exception as exc:  # pragma: no cover - history is best effort
-            log.debug("Verlauf konnte nicht aktualisiert werden: %s", exc)
+            log.debug("History could not be updated: %s", exc)
 
     # -- queue mutations ------------------------------------------------
     def add(
@@ -307,9 +307,9 @@ class PlayerService:
         cannot inject a URL.
         """
         if not video_ids:
-            raise ValidationError("Keine Titel angegeben.")
+            raise ValidationError("No tracks given.")
         if len(video_ids) > 200:
-            raise ValidationError("Zu viele Titel auf einmal (max. 200).")
+            raise ValidationError("Too many tracks at once (max. 200).")
 
         known: dict[str, Track] = {}
         for track in tracks or []:
@@ -324,7 +324,7 @@ class PlayerService:
             supplied = known.get(vid)
             resolved.append(supplied if supplied is not None else self.track_for(vid))
         if not resolved:
-            raise ValidationError("Keine gültigen Titel zum Hinzufügen.")
+            raise ValidationError("No valid tracks to add.")
 
         self.remember(resolved)
         with self._lock:
@@ -367,7 +367,7 @@ class PlayerService:
         with self._lock:
             length = len(self._queue(fresh=True))
             if src > length or dst > length:
-                raise ValidationError(f"Position liegt ausserhalb der Queue (1-{length}).")
+                raise ValidationError(f"Position is outside the queue (1-{length}).")
             if src != dst:
                 self.mpd.move(src, dst)
                 self._invalidate()
@@ -378,14 +378,14 @@ class PlayerService:
         with self._lock:
             self.mpd.clear()
             self._invalidate()
-        log.info("Queue geleert")
+        log.info("Queue cleared")
         return self.queue()
 
     def _require_position(self, position: Any) -> int:
         if isinstance(position, bool) or not isinstance(position, int):
-            raise ValidationError("Queue-Position muss eine ganze Zahl sein.")
+            raise ValidationError("Queue position must be a whole number.")
         if position < 1 or position > 10_000:
-            raise ValidationError("Queue-Position muss zwischen 1 und 10000 liegen.")
+            raise ValidationError("Queue position must be between 1 and 10000.")
         return position
 
     def _require_in_queue(self, position: int) -> int:
@@ -397,7 +397,7 @@ class PlayerService:
         """
         length = len(self._queue(fresh=True))
         if position > length:
-            raise ValidationError(f"Position liegt ausserhalb der Queue (1-{length}).")
+            raise ValidationError(f"Position is outside the queue (1-{length}).")
         return position
 
     # -- transport ------------------------------------------------------
@@ -406,8 +406,8 @@ class PlayerService:
             if position is None:
                 if not self._queue(fresh=True):
                     raise ValidationError(
-                        "Die Queue ist leer.",
-                        hint="Erst einen Titel suchen und zur Queue hinzufügen.",
+                        "The queue is empty.",
+                        hint="Search for a track and add it to the queue first.",
                     )
                 self.mpd.play()
             else:
@@ -424,7 +424,7 @@ class PlayerService:
         if current.playing:
             self.mpd.pause()
         elif not current.paused:
-            raise ValidationError("Es läuft gerade nichts, was pausiert werden könnte.")
+            raise ValidationError("Nothing is playing, so there is nothing to pause.")
         return self.status()
 
     def stop(self) -> dict[str, Any]:
@@ -434,7 +434,7 @@ class PlayerService:
     def next(self) -> dict[str, Any]:
         with self._lock:
             if not self._queue(fresh=True):
-                raise ValidationError("Die Queue ist leer.")
+                raise ValidationError("The queue is empty.")
             self._require_transport()
             self.mpd.next()
         return self.status()
@@ -442,7 +442,7 @@ class PlayerService:
     def previous(self) -> dict[str, Any]:
         with self._lock:
             if not self._queue(fresh=True):
-                raise ValidationError("Die Queue ist leer.")
+                raise ValidationError("The queue is empty.")
             self._require_transport()
             self.mpd.previous()
         return self.status()
@@ -457,27 +457,27 @@ class PlayerService:
         if self.mpd.status().position is None:
             raise ValidationError(
                 "Die Wiedergabe ist gestoppt.",
-                hint="Zuerst einen Titel starten, dann kann gesprungen werden.",
+                hint="Start a track first; then it can be skipped.",
             )
 
     def seek(self, seconds: float) -> dict[str, Any]:
         if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
-            raise ValidationError("'seconds' muss eine Zahl sein.")
+            raise ValidationError("'seconds' must be a number.")
         target = float(seconds)
         if target < 0 or target > 24 * 3600:
-            raise ValidationError("'seconds' muss zwischen 0 und 86400 liegen.")
+            raise ValidationError("'seconds' must be between 0 and 86400.")
         current = self.mpd.status()
         if current.stopped or current.position is None:
-            raise ValidationError("Es läuft gerade nichts, es kann nicht gesprungen werden.")
+            raise ValidationError("Nothing is playing, so it cannot be skipped.")
         self.mpd.seek(target)
         return self.status()
 
     def volume(self, percent: float) -> dict[str, Any]:
         if isinstance(percent, bool) or not isinstance(percent, (int, float)):
-            raise ValidationError("'volume' muss eine Zahl zwischen 0 und 100 sein.")
+            raise ValidationError("'volume' must be a number between 0 and 100.")
         value = round(float(percent))
         if value < 0 or value > 100:
-            raise ValidationError("'volume' muss zwischen 0 und 100 liegen.")
+            raise ValidationError("'volume' must be between 0 and 100.")
         self.mpd.volume(value)
         if value > 0:
             self._last_volume = value
@@ -486,7 +486,7 @@ class PlayerService:
     def mute(self, muted: bool) -> dict[str, Any]:
         """Mute by moving the volume to 0, unmute by restoring the last value."""
         if not isinstance(muted, bool):
-            raise ValidationError("'muted' muss true oder false sein.")
+            raise ValidationError("'muted' must be true or false.")
         if muted:
             current = self.mpd.status().volume_percent
             if current:
@@ -518,4 +518,4 @@ class PlayerService:
     @staticmethod
     def _check_bool(name: str, value: Any) -> None:
         if not isinstance(value, bool):
-            raise ValidationError(f"'{name}' muss true oder false sein.")
+            raise ValidationError(f"'{name}' must be true or false.")

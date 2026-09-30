@@ -1,0 +1,49 @@
+{
+  "album": "Some Album",
+  "artist": "Artist One",
+  "channel": "Artist One",
+  "duration": 249,
+  "formats": [
+    {
+      "abr": 133.69,
+      "acodec": "opus",
+      "ext": "webm",
+      "filesize": 4155462,
+      "format_id": "251",
+      "http_headers": {
+        "Accept": "*/*",
+        "User-Agent": "Mozilla/5.0"
+      },
+      "mime_type": "audio/webm; codecs=\"opus\"",
+      "url": "https://rr3---sn-x.googlevideo.com/videoplayback?expire=9999999999&itag=251",
+      "vcodec": "none"
+    },
+    {
+      "abr": 129.496,
+      "acodec": "mp4a.40.2",
+      "ext": "m4a",
+      "filesize": 4025466,
+      "format_id": "140",
+      "http_headers": {
+        "Accept": "*/*",
+        "User-Agent": "Mozilla/5.0"
+      },
+      "mime_type": "audio/mp4; codecs=\"mp4a.40.2\"",
+      "url": "https://rr3---sn-x.googlevideo.com/videoplayback?expire=9999999999&itag=140",
+      "vcodec": "none"
+    },
+    {
+      "acodec": "none",
+      "ext": "mp4",
+      "format_id": "137",
+      "url": "https://rr3---sn-x.googlevideo.com/videoplayback?itag=137",
+      "vcodec": "avc1.640028"
+    }
+  ],
+  "id": "5NV6Rdv1a3I",
+  "release_date": "20131021",
+  "thumbnail": "https://i.ytimg.com/vi/5NV6Rdv1a3I/maxres.jpg",
+  "title": "Artist One - First Song (Official Audio)",
+  "uploader": "Artist One",
+  "webpage_url": "https://www.youtube.com/watch?v=5NV6Rdv1a3I"
+}

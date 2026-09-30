@@ -2,6 +2,11 @@
 
 Complete, tested examples. Replace `USER` and adjust paths to your system.
 
+> **This page is about getting MPD itself running**: audio backends, service
+> permissions, remote access. For how StreamBridge *drives* MPD — the
+> `playlist_directory` contract, how track metadata reaches the queue, and the
+> audio output it needs — see [mpd.md](mpd.md).
+
 ## The packaged user service usually does not start
 
 Distributions ship `/usr/lib/systemd/user/mpd.service` with

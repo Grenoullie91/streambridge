@@ -1,0 +1,72 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # A weekly run catches a newly published advisory in a dependency that has
+  # not changed: the code is identical but the answer is not.
+  schedule:
+    - cron: "37 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only by default. This workflow scans; it must never be able to write.
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Dependency and static security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The history is what the privacy audit reads. A shallow clone would
+          # hide exactly the leaks this is meant to catch.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install audit tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit bandit
+
+      - name: Known vulnerabilities
+        run: pip-audit --strict
+
+      - name: Static analysis (bandit)
+        run: bandit -q -r src/streambridge -f screen
+
+  privacy:
+    name: Privacy audit (tree and full history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: No personal data or secrets, in any commit
+        run: ./scripts/privacy-audit.sh --all-commits
+
+  secrets:
+    name: Secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Catches credential shapes the privacy audit does not enumerate, and
+      # covers the whole history including blobs that were never in a tree.
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Fail the job rather than only annotating: a leaked token in a
+          # public repository is an incident, not a warning.
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"

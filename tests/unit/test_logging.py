@@ -37,10 +37,20 @@ class TestRedact:
         raw = "id 123e4567-e89b-12d3-a456-426614174000"
         assert REDACTED in redact(raw)
 
-    def test_loopback_is_also_redacted(self) -> None:
-        # 127.0.0.1 is not identifying, but redacting it keeps the rule simple
-        # and consistent: no literal address ever reaches a record.
-        assert REDACTED in redact("http://127.0.0.1:8787")
+    def test_loopback_survives_redaction(self) -> None:
+        # The loopback address is identical on every machine, so it identifies
+        # nobody, and it is the one address the user needs in order to open the
+        # web interface. Redacting it produced a startup log reading
+        # "Web UI: http://<REDACTED>:8787/", which is worse than useless.
+        assert redact("Web UI: http://127.0.0.1:8787/") == "Web UI: http://127.0.0.1:8787/"
+        assert redact("listening on ::1") == "listening on ::1"
+
+    def test_loopback_exception_does_not_hide_a_private_address(self) -> None:
+        # The exception must be narrow: a LAN address next to a loopback one is
+        # still redacted, and a loopback one embedded in a larger number is not
+        # mistaken for permission to keep it.
+        assert REDACTED in redact("from 127.0.0.1 to 192.168.1.50:6600")
+        assert REDACTED in redact("10.127.0.0.1 reachable")
 
     def test_ordinary_text_untouched(self) -> None:
         assert redact("search returned 3 results") == "search returned 3 results"

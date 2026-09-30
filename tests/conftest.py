@@ -85,11 +85,18 @@ class FakeRunner:
 
 @pytest.fixture
 def config(tmp_path: Path) -> Config:
-    """A config with short timeouts and a temporary cache directory."""
+    """A config with short timeouts and temporary cache and state directories.
+
+    Both directories must be redirected. The library defaults to
+    ``$XDG_STATE_HOME/streambridge``, so without this every test that touches
+    favourites or history would read and write the developer's real state, and
+    would see the files its neighbours left behind.
+    """
     return config_from_mapping(
         {
             "server": {"port": 18787},
             "cache": {"directory": str(tmp_path / "cache")},
+            "library": {"directory": str(tmp_path / "state")},
             "timeouts": {"request": 5.0, "resolve": 5.0, "info": 5.0},
         }
     )

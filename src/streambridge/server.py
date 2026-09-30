@@ -138,6 +138,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: could not bind {config.host}:{config.port}: {exc}", file=sys.stderr)
         return EXIT_CONFIG
 
+    # Log the address the UI is actually reachable at. A user service that
+    # started fine but is on an unexpected port has no other way to be found.
+    if config.web_enabled:
+        log.info("Web UI: %s/", config.base_url)
+    else:
+        log.warning(
+            "Web UI assets are missing from %s; serving the JSON API only.",
+            config.web_directory,
+        )
+    log.info("Queue: MPD at %s:%s", config.mpd_host, config.mpd_port)
+
     stopping = threading.Event()
 
     def shutdown(signum: int, _frame: FrameType | None) -> None:

@@ -9,7 +9,14 @@
 #  Dependency free and offline by design. No scanner to install, no
 #  network access, and nothing it finds leaves the machine.
 #
-#  Usage:  ./scripts/privacy-audit.sh [--staged]
+#  Usage:  ./scripts/privacy-audit.sh [--staged|--all-commits]
+#
+#    --staged       only what is about to be committed (pre-commit gate)
+#    --all-commits  every blob in every commit, not just the current tree
+#
+#  --all-commits is the one that matters before publishing: a secret that
+#  was removed in a later commit is still in the history, and rewriting
+#  history is far more painful than finding it now.
 # ===================================================================
 set -uo pipefail
 
@@ -48,22 +55,47 @@ ALLOW_UUID='123e4567-e89b-12d3-a456-426614174000'
 # pattern it searches for.
 SELF="scripts/privacy-audit.sh"
 
-if [ "${1:-}" = "--staged" ]; then
-  mapfile -t FILES < <(git diff --cached --name-only --diff-filter=ACMR)
-  SCOPE="staged files (${#FILES[@]})"
-else
-  mapfile -t FILES < <(git ls-files)
-  SCOPE="tracked files (${#FILES[@]})"
-fi
+ALL_COMMITS=0
+case "${1:-}" in
+  --staged)
+    mapfile -t FILES < <(git diff --cached --name-only --diff-filter=ACMR)
+    SCOPE="staged files (${#FILES[@]})"
+    ;;
+  --all-commits)
+    ALL_COMMITS=1
+    FILES=()
+    SCOPE="all commits"
+    ;;
+  *)
+    mapfile -t FILES < <(git ls-files)
+    SCOPE="tracked files (${#FILES[@]})"
+    ;;
+esac
 
-if [ "${#FILES[@]}" -eq 0 ]; then
+# In blob mode the file list is built later, from BLOB_LIST.
+if [ "$ALL_COMMITS" -eq 0 ] && [ "${#FILES[@]}" -eq 0 ]; then
   bold "privacy audit"
   note "nothing tracked yet"
   green "PASS"
   exit 0
 fi
 
+if [ "$ALL_COMMITS" -eq 1 ]; then
+  # "oid path" for every object ever committed. Deduplicated by object id, so
+  # a blob that has not changed since an early commit is read once rather than
+  # once per commit. A tree or commit id has no path and is skipped.
+  BLOB_MAP="$(mktemp)"
+  trap 'rm -f "$BLOB_MAP"' EXIT
+  git rev-list --objects --all \
+    | awk 'NF >= 2 { print $1, $2 }' \
+    | sort -u -k1,1 > "$BLOB_MAP"
+  BLOBS=$(wc -l < "$BLOB_MAP")
+fi
+
 # Drop this script and any binary: a binary cannot leak text.
+[ "$ALL_COMMITS" -eq 1 ] && FILES=()
+
+if [ "$ALL_COMMITS" -eq 0 ]; then
 mapfile -t FILES < <(printf '%s\n' "${FILES[@]}" | while read -r f; do
   [ -f "$f" ] || continue
   [ "$f" = "$SELF" ] && continue
@@ -72,8 +104,10 @@ mapfile -t FILES < <(printf '%s\n' "${FILES[@]}" | while read -r f; do
     *) printf '%s\n' "$f" ;;
   esac
 done)
+fi
 
 bold "privacy audit - $SCOPE"
+[ "$ALL_COMMITS" -eq 1 ] && note "${BLOBS} distinct object(s), content as of each commit"
 echo
 
 # scan <label> <regex> [rationale] [allow-regex] [ignore-case]
@@ -86,11 +120,28 @@ echo
 scan() {
   local label="$1" regex="$2" rationale="${3:-}" allow="${4:-}" icase="${5:-}"
   local matches count
-  local -a flags=(-InE)
+  local -a flags=(-nE)
   [ -n "$icase" ] && flags+=(-i)
-  # -I skips binary matches, -n prefixes file:line so a hit can be located.
-  matches=$(printf '%s\n' "${FILES[@]}" \
-    | xargs -r grep "${flags[@]}" "$regex" 2>/dev/null || true)
+
+  if [ "$ALL_COMMITS" -eq 1 ]; then
+    # Scan the blob contents directly rather than through "git grep <blob>":
+    # given a blob instead of a tree, git grep reports a line number but no
+    # path, so a finding could not be located and the allowlist regexes would
+    # have nothing to anchor on. BLOB_MAP carries the path for each object.
+    matches=$(
+      while read -r oid path; do
+        [ -n "$path" ] || continue
+        git cat-file blob "$oid" 2>/dev/null \
+          | grep -I "${flags[@]}" "$regex" 2>/dev/null \
+          | sed "s|^|${path}:|" || true
+      done < "$BLOB_MAP"
+    )
+  else
+    # -I skips binary matches, -n prefixes file:line so a hit can be located.
+    matches=$(printf '%s\n' "${FILES[@]}" \
+      | xargs -r grep -I "${flags[@]}" "$regex" 2>/dev/null || true)
+  fi
+
   if [ -n "$allow" ] && [ -n "$matches" ]; then
     matches=$(printf '%s\n' "$matches" | grep -vE "$allow" || true)
   fi

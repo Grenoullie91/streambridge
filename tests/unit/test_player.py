@@ -33,7 +33,10 @@ def make_track(video_id: str = "5NV6Rdv1a3I", **overrides: object) -> Track:
 @pytest.fixture
 def player(tmp_path: Path) -> PlayerService:
     config = config_from_mapping(
-        {"cache_directory": str(tmp_path / "cache"), "state_directory": str(tmp_path / "state")}
+        {
+            "cache": {"directory": str(tmp_path / "cache")},
+            "library": {"directory": str(tmp_path / "state")},
+        }
     )
     mpd = FakeMpd(config)
     library = LibraryStore(tmp_path / "state")

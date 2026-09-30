@@ -1,0 +1,39 @@
+# StreamBridge example ncmpcpp configuration
+#
+# Copy to $XDG_CONFIG_HOME/ncmpcpp/ncmpcpp.conf. The settings marked REQUIRED
+# make ncmpcpp show StreamBridge tracks the way they are meant to be shown.
+#
+# Any MPD client works. ncmpcpp is the most common one because it shows the
+# queue metadata that StreamBridge injects.
+
+# REQUIRED: the local address StreamBridge is reachable at. These are the exact
+# same values as [server] host and port in StreamBridge's config.toml. If they
+# disagree, playback fails with a connection error that looks like a codec
+# problem.
+mpd_host = "127.0.0.1"
+mpd_port = "6600"
+
+# Time in seconds. StreamBridge streams through a local HTTP hop that resolves
+# the source on demand, so the first byte of a track is slower than a local
+# file. A short timeout here produces spurious "connection failed" messages.
+mpd_music_dir = "~/.local/share/mpd/music"
+
+# Show duration and elapsed time as MM:SS. StreamBridge provides both.
+time_format = "%l:%m"
+# Show remaining rather than elapsed time.
+time_remaining = "no"
+
+# REQUIRED: read the #EXTINF tags. StreamBridge injects title, artist, album
+# and duration into a temporary playlist because MPD will not accept tags on a
+# URL add. Without this the queue shows bare URLs.
+enabled = "yes"
+playlist_display_mode = "extinf"
+# Keep the queue list scrolling instead of jumping on every track change.
+follow_current_song = "yes"
+# Show the current song in the header.
+current_song_display_mode = "extinf"
+
+# A big window rescan (shift+R) re-reads the whole queue. Cheap here: the
+# entries are local URLs and no files are read.
+refresh_ms = "1000"
+mpd_poll_timeout = "1"

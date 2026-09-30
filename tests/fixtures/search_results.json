@@ -1,0 +1,35 @@
+{
+  "entries": [
+    {
+      "channel": "Artist One",
+      "duration": 249.0,
+      "id": "5NV6Rdv1a3I",
+      "release_date": "20131021",
+      "thumbnails": [
+        {
+          "preference": 1,
+          "url": "https://i.ytimg.com/vi/5NV6Rdv1a3I/hq.jpg",
+          "width": 480
+        }
+      ],
+      "title": "Artist One - First Song (Official Audio)",
+      "uploader": "Artist One",
+      "webpage_url": "https://www.youtube.com/watch?v=5NV6Rdv1a3I"
+    },
+    {
+      "album": "Some Album",
+      "artist": "Artist One",
+      "duration": 248,
+      "id": "CCHdMIEGaaM",
+      "title": "Artist One - First Song (Official Video)",
+      "uploader": "Artist One",
+      "webpage_url": "https://www.youtube.com/watch?v=CCHdMIEGaaM"
+    },
+    {
+      "id": "too-short-id",
+      "title": "invalid id entry"
+    }
+  ],
+  "id": null,
+  "title": "ytsearch3 result"
+}

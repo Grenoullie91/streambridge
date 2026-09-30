@@ -1,0 +1,29 @@
+# Citation for StreamBridge.
+#
+# Cite this work with the metadata below. If you fork or extend StreamBridge,
+# update the authors and the version to match your own work: a citation that
+# points at someone else's repository for a change you made is worse than no
+# citation at all.
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "StreamBridge: a local streaming bridge between online music sources and MPD"
+abstract: >-
+  StreamBridge is a local HTTP bridge that makes an online music catalogue
+  playable in MPD, and therefore in any MPD client. It resolves sources on
+  demand, serves them over a loopback-only HTTP endpoint, and never stores
+  audio, sends telemetry, or requires an account. It ships a browser interface,
+  a command line client, and a machine-readable HTTP API.
+type: software
+version: 0.1.0
+license: MIT
+repository-code: "https://github.com/OWNER/streambridge"
+url: "https://github.com/OWNER/streambridge"
+keywords:
+  - music
+  - mpd
+  - streaming
+  - self-hosted
+  - privacy
+authors:
+  - name: "StreamBridge contributors"
+    website: "https://github.com/OWNER/streambridge/graphs/contributors"

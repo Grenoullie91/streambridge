@@ -1,5 +1,5 @@
 /* ==========================================================================
-   ytmpc web interface
+   StreamBridge web interface
    Vanilla ES module, no build step, no external dependency.
    The browser only ever talks to this local server: searches, metadata, queue
    control and status all go through the JSON API below, and thumbnails are
@@ -23,7 +23,11 @@ function el(spec, attrs = null, ...children) {
       if (value === null || value === undefined || value === false) continue;
       if (key === 'class') node.className = [node.className, value].filter(Boolean).join(' ');
       else if (key === 'text') node.textContent = String(value);
-      else if (key === 'html') node.innerHTML = value;
+      // There is deliberately no 'html' key. innerHTML is an XSS sink, and an
+      // upstream title is attacker-controlled: anyone can publish a video whose
+      // title is the payload. A search result's title must reach the DOM as
+      // text, which is what 'text' does. Keeping the escape hatch around
+      // because it "might be useful" is how it eventually gets used.
       else if (key === 'dataset') Object.assign(node.dataset, value);
       else if (key.startsWith('on') && typeof value === 'function') {
         node.addEventListener(key.slice(2).toLowerCase(), value);
@@ -38,7 +42,13 @@ function el(spec, attrs = null, ...children) {
   return node;
 }
 
-/** Inline SVG from a path spec; keeps the markup free of external icons. */
+/**
+ * Inline SVG from a path spec; keeps the markup free of external icons.
+ *
+ * The only remaining innerHTML in the UI, and it takes an ICON constant rather
+ * than anything from the server. Icons are the one place markup is the point;
+ * every text node uses textContent.
+ */
 function icon(paths, className = '') {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
@@ -129,7 +139,7 @@ const api = {
       response = await fetch(path, init);
     } catch (err) {
       throw new ApiError('Der Server ist nicht erreichbar.', {
-        hint: 'Läuft ytmpc-server?  systemctl --user status ytmpc-server',
+        hint: 'Läuft streambridge-server?  systemctl --user status streambridge-server',
         code: 'NETWORK',
       });
     }
@@ -172,7 +182,7 @@ const state = {
   busy: new Set(),
 };
 
-const RECENT_KEY = 'ytmpc.recent-queries';
+const RECENT_KEY = 'streambridge.recent-queries';
 const RECENT_MAX = 8;
 
 function loadRecent() {

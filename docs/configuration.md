@@ -2,7 +2,7 @@
 
 Config file: `$XDG_CONFIG_HOME/streambridge/config.toml`, or
 `$XDG_CONFIG_HOME` unset means `~/.config`. A full commented example lives in
-[`config/config.example.toml`](../config/config.example.toml).
+[`config/streambridge.example.toml`](../config/streambridge.example.toml).
 
 ## Precedence
 

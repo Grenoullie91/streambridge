@@ -237,7 +237,8 @@ class TestQueue:
     def test_add_and_read(self, api_server: tuple[Client, FakeMpd]) -> None:
         http, _ = api_server
         status, body, _ = http.post("/queue/add", {"ids": [VIDEO], "tracks": [track().to_dict()]})
-        assert status == 200
+        # 201: the queue really did gain an entry.
+        assert status == 201
         assert body["added"] == 1
         _, listed, _ = http.get("/queue")
         assert listed["length"] == 1
@@ -293,7 +294,7 @@ class TestQueue:
         http, _ = api_server
         status, body, _ = http.post("/queue/remove", {"position": 5})
         assert status == 400
-        assert "ausserhalb" in body["message"]
+        assert "outside" in body["message"]
 
     def test_move(self, api_server: tuple[Client, FakeMpd]) -> None:
         http, _ = api_server
@@ -416,7 +417,7 @@ class TestRequestHandling:
         http, _ = api_server
         status, body, _ = http.post("/player/volume", {"volume": 1, "padding": "x" * 70_000})
         assert status == 400
-        assert "zu gross" in body["message"]
+        assert "too large" in body["message"]
 
     def test_malformed_json(self, api_server: tuple[Client, FakeMpd]) -> None:
         http, _ = api_server
@@ -455,7 +456,7 @@ class TestWebAssets:
         assert status == 200
         assert headers["Content-Type"].startswith("text/html")
         html = body.decode() if isinstance(body, bytes) else str(body)
-        assert "streambridge" in html
+        assert "StreamBridge" in html
         assert '<script src="/app.js"' in html
 
     def test_root_serves_json_for_a_client(self, api_server: tuple[Client, FakeMpd]) -> None:

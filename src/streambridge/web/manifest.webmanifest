@@ -1,6 +1,6 @@
 {
-  "name": "ytmpc",
-  "short_name": "ytmpc",
+  "name": "StreamBridge",
+  "short_name": "StreamBridge",
   "description": "Lokale Musikoberflaeche fuer YouTube Music und MPD",
   "start_url": "/",
   "scope": "/",

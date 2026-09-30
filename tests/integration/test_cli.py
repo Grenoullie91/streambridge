@@ -19,7 +19,7 @@ from streambridge.cli import (
     main,
     tracks_from_payload,
 )
-from streambridge.errors import ExitCode, StreamBridgeError
+from streambridge.errors import ExitCode, StreamBridgeError, ValidationError
 from streambridge.models import SearchType, Track
 
 pytestmark = pytest.mark.integration
@@ -264,3 +264,23 @@ class TestSearchTypes:
 
     def test_search_type_enum_matches_parser(self) -> None:
         assert {t.value for t in SearchType} >= {"songs", "videos"}
+
+
+class TestServerClientScheme:
+    """The client must only ever speak HTTP to a loopback address.
+
+    Bandit flags every urlopen; the useful answer is not a blanket noqa but an
+    enforced invariant, so a configuration that somehow produced a file:// base
+    fails here instead of reading a local file.
+    """
+
+    def test_a_non_http_base_is_refused(self) -> None:
+        client = ServerClient("file:///etc/passwd")
+        with pytest.raises(ValidationError) as excinfo:
+            client._get("/health")
+        assert "file" in excinfo.value.user_message()
+
+    def test_a_schemeless_base_is_refused(self) -> None:
+        client = ServerClient("127.0.0.1:8787")
+        with pytest.raises(ValidationError):
+            client._get("/health")

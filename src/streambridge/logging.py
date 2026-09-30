@@ -47,6 +47,31 @@ _SECRET_FLAGS = (
 _HOME_RE = re.compile(r"/(?:home|Users)/[^/\s\"']+")
 _EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
 _IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+
+# The loopback addresses identify nobody: they are identical on every machine
+# and are the only address this server will bind. Redacting them would make the
+# startup log say "Web UI: http://<REDACTED>:8787/", which tells the user
+# nothing they can act on - they cannot find the page they were told exists.
+#
+# Each pattern is anchored on address boundaries. Without them, 10.127.0.0.1
+# contains 127.0.0.1 as a substring and a private address would survive
+# redaction, which is precisely what redaction is for.
+_LOOPBACK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?<![\d.])127\.0\.0\.1(?![\d.])"),
+    re.compile(r"(?<![0-9a-fA-F:])::1(?![0-9a-fA-F:])"),
+    re.compile(r"(?<![0-9a-fA-F:])0:0:0:0:0:0:0:1(?![0-9a-fA-F:])"),
+)
+
+# The literal each pattern above matches, in the same order. Kept separate so
+# the restore step needs no regex and cannot itself alter the text.
+_LOOPBACK_LITERALS: tuple[str, ...] = ("127.0.0.1", "::1", "0:0:0:0:0:0:0:1")
+
+
+def _loopback_slot(index: int) -> str:
+    """A placeholder that survives the redaction regexes unchanged."""
+    return f"\x00loopback{index}\x00"
+
+
 _UUID_RE = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 )
@@ -61,13 +86,25 @@ def redact(text: str) -> str:
     replaced. Hostnames are not rewritten - they rarely appear in log lines,
     and blanking them would make the output unreadable. Callers that log a
     URL should use :func:`redact_url` instead.
+
+    The loopback addresses are the exception: they are the same on every
+    machine, so they identify nothing, and they are the only thing the user
+    needs in order to reach the web interface.
     """
     if not text:
         return text
-    result = _HOME_RE.sub("$HOME", text)
+    # Park the loopback literals, redact everything else, then put them back.
+    # Parking rather than exempting keeps a *private* address such as
+    # 192.168.x.x redacted, which is the case the redaction exists for.
+    parked = text
+    for index, pattern in enumerate(_LOOPBACK_PATTERNS):
+        parked = pattern.sub(_loopback_slot(index), parked)
+    result = _HOME_RE.sub("$HOME", parked)
     result = _EMAIL_RE.sub(REDACTED, result)
     result = _UUID_RE.sub(REDACTED, result)
     result = _IPV4_RE.sub(REDACTED, result)
+    for index, literal in enumerate(_LOOPBACK_LITERALS):
+        result = result.replace(_loopback_slot(index), literal)
     return result
 
 

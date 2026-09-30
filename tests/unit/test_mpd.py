@@ -16,7 +16,8 @@ from pathlib import Path
 import pytest
 
 from conftest import FakeRunner
-from streambridge.config import config_from_mapping
+from streambridge import mpd
+from streambridge.config import Config, config_from_mapping
 from streambridge.errors import DependencyError, MpdError, ValidationError
 from streambridge.models import Track
 from streambridge.mpd import MpdClient, clean_tag
@@ -187,19 +188,47 @@ class TestPlaylistDirectory:
         client = build(FakeRunner(), mpd={"playlist_directory": str(tmp_path / "pl")})
         assert client.playlist_dir() == tmp_path / "pl"
 
-    def test_falls_back_to_cache_directory(self, tmp_path: Path) -> None:
+    def test_read_from_mpd_conf(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """mpc 0.35 has no `paths` subcommand, so mpd.conf is the second source."""
+        conf = tmp_path / "mpd.conf"
+        conf.write_text(
+            f'music_directory "/music"\nplaylist_directory  "{tmp_path / "playlists"}"\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(mpd, "_mpd_conf_candidates", lambda: (conf,))
+        client = MpdClient(Config(), runner=FakeRunner(), executable=FAKE_MPC)
+        assert client.playlist_dir() == tmp_path / "playlists"
+
+    def test_a_commented_out_directive_is_not_used(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        conf = tmp_path / "mpd.conf"
+        conf.write_text(f'#playlist_directory "{tmp_path / "wrong"}"\n', encoding="utf-8")
+        monkeypatch.setattr(mpd, "_mpd_conf_candidates", lambda: (conf, tmp_path / "absent.conf"))
+        client = MpdClient(Config(), runner=FakeRunner(), executable=FAKE_MPC)
+        # Unresolvable, and it must say so rather than guess.
+        with pytest.raises(MpdError) as excinfo:
+            client.playlist_dir()
+        assert "playlist_directory" in excinfo.value.user_message()
+
+    def test_refuses_to_guess_when_nothing_can_be_determined(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No silent fallback any more.
+
+        Falling back to the cache directory cannot work: MPD never looks there,
+        so every load failed with "No such playlist" while the real cause - an
+        unset setting - stayed invisible. Refusing to guess and naming the key
+        turns a puzzling failure into a one-line fix.
+        """
+        monkeypatch.setattr(mpd, "_mpd_conf_candidates", lambda: (tmp_path / "absent.conf",))
         config = config_from_mapping({"cache": {"directory": str(tmp_path / "cache")}})
         client = MpdClient(config, runner=FakeRunner(), executable=FAKE_MPC)
-        assert client.playlist_dir() == tmp_path / "cache"
-        assert (tmp_path / "cache").is_dir()
-
-    def test_falls_back_when_mpc_paths_is_unavailable(self, tmp_path: Path) -> None:
-        # mpc 0.35 has no `paths` subcommand; the fallback must still work.
-        runner = FakeRunner()
-        runner.add("paths", CompletedRun((), 1, "", "unknown command"))
-        config = config_from_mapping({"cache": {"directory": str(tmp_path / "cache")}})
-        client = MpdClient(config, runner=runner, executable=FAKE_MPC)
-        assert client.playlist_dir() == tmp_path / "cache"
+        with pytest.raises(MpdError) as excinfo:
+            client.playlist_dir()
+        assert "playlist_directory" in excinfo.value.user_message()
+        # Nothing was written anywhere on the way to failing.
+        assert not (tmp_path / "cache").exists()
 
 
 class TestCommands:

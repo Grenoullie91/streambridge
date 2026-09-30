@@ -1,0 +1,45 @@
+# StreamBridge example MPD configuration
+#
+# Copy the marked lines into your mpd.conf. Everything here is already the
+# default in a typical MPD install; the two settings that actually matter for
+# StreamBridge are marked "REQUIRED".
+#
+# StreamBridge never writes to the MPD database. It adds local HTTP URLs to the
+# running queue, so MPD needs to be able to reach the StreamBridge port, and
+# StreamBridge needs to be able to write a temporary playlist file.
+
+music_directory     "~/.local/share/mpd/music"
+playlist_directory  "~/.local/share/mpd/playlists"
+
+# REQUIRED: MPD only accepts `load` for a file inside playlist_directory.
+# StreamBridge writes its generated .m3u there and this is the value it must be
+# told about, either through [mpd] playlist_directory in StreamBridge's config
+# or by leaving it unset so auto-detection finds it.
+# playlist_directory   "~/.local/share/mpd/playlists"
+
+# Local only. StreamBridge's own server refuses to bind anything but loopback,
+# and MPD should do the same: this port is an unauthenticated full queue
+# control surface for whoever can reach it.
+bind_to_address     "127.0.0.1"
+port                "6600"
+
+# A queue that can hold a whole browsing session. MPD's default of 1000 is
+# already generous; raise it only if you queue long DJ sets.
+queue_limit         "10000"
+
+# Log files grow without bound otherwise. One rotated file keeps a week of
+# troubleshooting available without filling a home partition.
+log_file            "~/.local/state/mpd/mpd.log"
+
+# Required for the formats StreamBridge's resolver hands over. A 404 or a
+# truncated stream here shows up as a track that will not play.
+audio_output {
+    type        "httpd"
+    name        "StreamBridge output"
+    encoder     "lame"
+    port        "8000"
+    bitrate     "192"
+    format      "44100:16:2"
+    mixer_type  "software"
+    tags        "no"
+}

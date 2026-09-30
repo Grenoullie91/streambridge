@@ -1,0 +1,54 @@
+# Dependency updates.
+#
+# Grouped by ecosystem and, within the action group, by everything. Grouping
+# matters here more than it usually does: a stream of one-action-per-PR
+# notifications trains people to click "approve all" without reading, which
+# defeats the point of a security update arriving as a reviewable diff.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      dev-dependencies:
+        patterns:
+          - "pytest*"
+          - "ruff*"
+          - "mypy*"
+          - "playwright*"
+          - "pip-audit*"
+          - "bandit*"
+      # The runtime has no third-party dependencies by design. This group
+      # exists so that a dependency appearing here is visible in review
+      # instead of quietly enlarging the install.
+      runtime:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "build"

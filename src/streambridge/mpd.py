@@ -19,7 +19,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import Config
+from .config import Config, config_home
 from .errors import DependencyError, MpdError, ValidationError
 from .metadata import to_extinf_name
 from .models import Track, validate_video_id
@@ -63,6 +63,42 @@ def parse_mpd_time(value: str | None) -> int | None:
     if third is None:
         return int(first) * 60 + int(second)
     return int(first) * 3600 + int(second) * 60 + int(third)
+
+
+_MPD_CONF_DIRECTIVE_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s+\"([^\"]*)\"", re.MULTILINE)
+
+
+def _mpd_conf_value(text: str, directive: str) -> str | None:
+    """Return the quoted value of *directive* in an mpd.conf body.
+
+    Comments are stripped first, so a commented-out line is not mistaken for
+    the real setting. The last occurrence wins, matching how MPD itself reads
+    a file that assigns the same directive twice.
+    """
+    uncommented = re.sub(r"(?m)#.*$", "", text)
+    values = [
+        value
+        for name, value in _MPD_CONF_DIRECTIVE_RE.findall(uncommented)
+        if name == directive and value
+    ]
+    return values[-1] if values else None
+
+
+def _mpd_conf_candidates() -> tuple[Path, ...]:
+    """Where MPD's own configuration is looked for, in order.
+
+    A function rather than a constant so a test can point it at a fixture
+    instead of reading whatever mpd.conf happens to be on the machine. A test
+    that depends on the developer's real configuration passes on their laptop
+    and fails in CI, which is the worst possible failure mode.
+    """
+    candidates: list[Path] = []
+    env_home = os.environ.get("XDG_CONFIG_HOME")
+    if env_home:
+        candidates.append(Path(env_home) / "mpd" / "mpd.conf")
+    candidates.append(Path(config_home()) / "mpd" / "mpd.conf")
+    candidates.append(Path("/etc/mpd.conf"))
+    return tuple(candidates)
 
 
 def clean_tag(value: str) -> str:
@@ -337,6 +373,14 @@ class MpdClient:
         """Empty the queue. Never touches the MPD database."""
         return self._run(self._args("clear"))
 
+    def move(self, source: int, target: int) -> str:
+        """Move the song at 1-based *source* to 1-based *target*.
+
+        Reordering is a queue edit, not a database write, so the two are kept
+        apart here just like add and delete are.
+        """
+        return self._run(self._args("move", str(source), str(target)))
+
     def next(self) -> str:
         return self._run(self._args("next"))
 
@@ -385,30 +429,69 @@ class MpdClient:
         ``playlist_directory``, so this must match that setting. Resolution
         order:
 
-        1. ``playlist_directory`` from the configuration (explicit, reliable)
-        2. ``mpc paths`` (exists in older mpc, absent in 0.35)
-        3. the cache directory
+        1. ``playlist_directory`` from the StreamBridge configuration
+        2. ``mpc paths``, on the mpc versions that have it
+        3. the ``playlist_directory`` line of MPD's own mpd.conf
+
+        There is deliberately no fourth step. An earlier version fell back to
+        the cache directory, which cannot work: MPD never looks there, so every
+        load failed with "No such playlist" and the real cause - an unset
+        setting - stayed invisible. Refusing to guess and saying which key to
+        set turns a puzzling failure into a one-line fix.
         """
         if self._config.playlist_directory is not None:
             return Path(self._config.playlist_directory).expanduser()
 
+        found = self._playlist_dir_from_mpc()
+        if found is not None:
+            return found
+
+        found = self._playlist_dir_from_mpd_conf()
+        if found is not None:
+            log.info("Using MPD playlist directory %s from mpd.conf", found)
+            return found
+
+        raise MpdError(
+            "Could not determine MPD's playlist_directory.",
+            hint=(
+                "Set mpd.playlist_directory in the StreamBridge configuration to "
+                "the same value as playlist_directory in your mpd.conf."
+            ),
+        )
+
+    def _playlist_dir_from_mpc(self) -> Path | None:
+        """Ask mpc. Only older versions have the `paths` command."""
         try:
             raw = self._run(self._args("paths"), timeout=10.0)
         except (MpdError, DependencyError):
-            raw = ""
+            # mpc 0.35 has no `paths`; an unknown command is a normal answer.
+            return None
         for line in raw.splitlines():
             if line.lower().startswith("playlist:"):
                 value = line.split(":", 1)[1].strip()
                 if value:
                     expanded = shlex.split(value)[0] if value.startswith("~") else value
                     return Path(expanded).expanduser()
+        return None
 
-        fallback = Path(self._config.cache_directory).expanduser()
-        try:
-            fallback.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            return Path(tempfile.gettempdir())
-        return fallback
+    def _playlist_dir_from_mpd_conf(self) -> Path | None:
+        """Read the playlist_directory line out of MPD's own configuration.
+
+        A parser, not a full mpd.conf implementation: the directive is a single
+        quoted path, and an `include` that sets it elsewhere is handled by the
+        user setting the value explicitly.
+        """
+        for candidate in _mpd_conf_candidates():
+            try:
+                if not candidate.is_file():
+                    continue
+                text = candidate.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            value = _mpd_conf_value(text, "playlist_directory")
+            if value:
+                return Path(value).expanduser()
+        return None
 
     def write_playlist(self, entries: list[tuple[str, Track]], target_dir: Path) -> Path:
         """Write an EXTM3U file for *entries* into *target_dir*.

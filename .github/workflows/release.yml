@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and check, but do not publish"
+        type: boolean
+        default: true
+
+# Only a tag push may create a release. A pull request must never be able to
+# publish, so the permissions are granted per job rather than at the top.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Verify before publishing
+        # A release is the one moment a mistake becomes permanent and public.
+        # Nothing is published from a tree that does not pass its own gate.
+        run: ./scripts/verify.sh
+
+      - name: Build
+        run: python -m build
+
+      - name: Check the distributions
+        run: twine check dist/*
+
+      - name: Confirm the version matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/v}"
+          found="$(python -c "
+          import pathlib, tomllib
+          print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])
+          ")"
+          if [ "$tag" != "$found" ]; then
+            echo "Tag v${tag} does not match pyproject version ${found}." >&2
+            echo "A tag that disagrees with the source is the most confusing release bug there is." >&2
+            exit 1
+          fi
+
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: python -m twine upload dist/*
+
+      - name: Create the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # --verify-tag stops a release being created for a tag that does not
+          # exist, and --generate-notes keeps the changelog honest instead of
+          # hand-maintained and drifting.
+          gh release create "${GITHUB_REF#refs/tags/}" \
+            --verify-tag \
+            --generate-notes \
+            dist/*
+
+      - name: Upload artefacts (dry run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') && !inputs.dry_run }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

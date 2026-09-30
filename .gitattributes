@@ -1,0 +1,33 @@
+# Normalise line endings in the repository. Without this, a file edited on
+# Windows shows as modified on Linux even when the content is identical, which
+# buries real changes in noise.
+* text=auto eol=lf
+
+# Files that must stay exactly as they are. A shell script with CRLF endings
+# fails with a confusing "command not found" on the shebang line.
+*.sh text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.svg text eol=lf
+
+# Binary assets: never diffed, never line-ending converted.
+*.woff2 binary
+*.woff binary
+*.png binary
+*.ico binary
+*.jpg binary
+*.webp binary
+*.mp3 binary
+*.m3u binary
+
+# Keep generated and vendored paths out of language statistics and diffs.
+web linguist-vendored
+*.svg linguist-generated=true
+
+# Diff generated files more usefully than "Binary files differ".
+*.lock text eol=lf

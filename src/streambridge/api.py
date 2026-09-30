@@ -20,6 +20,7 @@ import contextlib
 import json
 import logging
 import re
+import sys
 import threading
 import time
 import urllib.error
@@ -35,7 +36,10 @@ from . import __version__
 from .cache import DiskSearchCache, TtlCache, info_cache_key, search_cache_key, track_from_dict
 from .config import Config
 from .errors import (
+    ConfigError,
+    DependencyError,
     MpdError,
+    NotFoundError,
     RateLimitError,
     SourceUnavailableError,
     StreamBridgeError,
@@ -80,7 +84,8 @@ _MUTATING_PATHS = frozenset(
         "/player/volume",
         "/player/mute",
         "/player/modes",
-        "/favorites",
+        "/favorites/add",
+        "/favorites/remove",
         "/favorites/toggle",
         "/favorites/clear",
         "/history/clear",
@@ -158,6 +163,30 @@ MAX_BODY_BYTES = 64 * 1024
 MAX_BATCH_IDS = 200
 
 
+# Stable, machine-readable error codes.
+#
+# The class name is an implementation detail of this Python package and may be
+# renamed; the code is part of the HTTP contract, so a client can branch on it
+# without string-matching messages. "error" keeps the class name for humans and
+# for anything already relying on it.
+_ERROR_CODES: dict[type, str] = {
+    ValidationError: "VALIDATION_ERROR",
+    NotFoundError: "NOT_FOUND",
+    RateLimitError: "RATE_LIMITED",
+    SourceUnavailableError: "UPSTREAM_ERROR",
+    MpdError: "MPD_ERROR",
+    DependencyError: "DEPENDENCY_MISSING",
+    ConfigError: "CONFIG_ERROR",
+}
+
+
+def _error_code(exc: StreamBridgeError) -> str:
+    for kind, code in _ERROR_CODES.items():
+        if isinstance(exc, kind):
+            return code
+    return "INTERNAL_ERROR"
+
+
 def _first(params: dict[str, list[str]], key: str) -> str | None:
     """First value of a query parameter, or None when absent or empty."""
     values = params.get(key)
@@ -214,10 +243,10 @@ class ApiService:
         # or startup: a read-only or unused install must not need a writable
         # state directory just to serve the API.
         self.library = library or LibraryStore(config.state_directory)
-        # Kept separate from _track_cards: that one is rebuilt on every
-        # /search, this one is a single-entry memo, because resolving a track
-        # means a yt-dlp call and the UI asks for the same video repeatedly.
-        self._track_cards: dict[str, dict[str, Any]] = {}
+        # Resolved tracks, keyed by id. Resolving costs a yt-dlp call and the
+        # UI asks for the same video repeatedly: a queue row, the favourite
+        # badge and the now-playing panel all want it.
+        self._track_cards: dict[str, Track] = {}
         self.player = player or PlayerService(config, mpd=self.mpd, library=self.library, api=self)
         self.started_at = time.time()
         self._extractor_version: str | None = None
@@ -251,7 +280,7 @@ class ApiService:
         }
 
     def banner(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "service": "streambridge",
             "version": __version__,
             "endpoints": [
@@ -262,7 +291,7 @@ class ApiService:
                 "/playlist",
                 "/stream/<id>",
                 "/thumbnail/<id>",
-                "/player",
+                "/player/status",
                 "/queue",
                 "/favorites",
                 "/history",
@@ -270,6 +299,13 @@ class ApiService:
                 "/stats",
             ],
         }
+        # The UI's own address, so a client that only ever reads the banner
+        # still learns where the browser page lives. Present only when the
+        # assets really are on disk: a key that always exists and points
+        # nowhere is worse than an absent one.
+        if self._config.web_enabled:
+            payload["web_ui"] = self._config.base_url + "/"
+        return payload
 
     def version(self) -> dict[str, Any]:
         """Name, version and extractor version.
@@ -283,27 +319,34 @@ class ApiService:
             "extractor": self.extractor_version() or "not found",
         }
 
-    def _track_card(self, video_id: str) -> dict[str, Any]:
-        """Look a track up, resolving it on the first request for that id.
+    def cached_track(self, video_id: str) -> Track | None:
+        """Metadata for *video_id* only if it is already in memory.
 
-        The player and the library both need metadata for a single id that was
-        not just searched for: a row queued from ncmpcpp, a favourite restored
-        at start-up, an id pasted into the address bar. Resolving costs an
-        upstream call, so the result is kept for the process lifetime. Failing
-        is not cached, so a track that was unreachable a moment ago gets
-        another chance.
+        Never contacts yt-dlp. The player calls this to decorate queue rows and
+        the now-playing bar, which run on every poll: a poll that resolved
+        metadata would put a subprocess in front of a one-second status query.
+        An unresolvable id is not an error here, it is simply a miss.
         """
-        card = self._track_cards.get(video_id)
-        if card is not None:
-            return card
-        # info() is the cached path; track() would re-derive the same dict from
-        # the same cache, so the dict is used directly here.
-        raw = self.info(video_id)
-        # The library keys on "video_id", Track.to_dict() calls it "id".
-        card = {**raw, "video_id": video_id}
-        if card:
-            self._track_cards[video_id] = card
-        return card
+        try:
+            vid = validate_video_id(video_id)
+        except ValidationError:
+            return None
+        memo = self._track_cards.get(vid)
+        if memo is not None:
+            return memo
+        payload = self._info_cache.get(info_cache_key(vid))
+        if not isinstance(payload, dict):
+            return None
+        return track_from_dict(payload)
+
+    def _memoise(self, track: Track) -> None:
+        """Remember a resolved track for cached_track.
+
+        The single-entry-per-id memo lives in memory only. The info cache
+        already persists to disk, so a second copy on disk would only add a way
+        for the two to disagree.
+        """
+        self._track_cards[track.id] = track
 
     def _enrich(
         self,
@@ -323,16 +366,9 @@ class ApiService:
             video_id = track.get("id")
             if not isinstance(video_id, str):
                 continue
-            try:
-                card = self._track_card(video_id)
-            except StreamBridgeError:
-                # Stored metadata is what the user already had; keep it.
-                track.setdefault("thumbnail", self.thumbnail_url(video_id))
-                continue
-            for key in ("title", "artist", "duration", "thumbnail", "channel"):
-                value = card.get(key)
-                if value is not None:
-                    track[key] = value
+            card = self.cached_track(video_id)
+            if card is not None:
+                track.update(card.to_dict())
             track.setdefault("thumbnail", self.thumbnail_url(video_id))
         return entries
 
@@ -341,15 +377,19 @@ class ApiService:
         entries = self._enrich(self.library.favorites())
         return {
             "items": entries,
+            "length": len(entries),
             # Sent alongside the items so the UI can test membership without
             # walking the list for every row it paints.
-            "ids": [item["track"]["id"] for item in entries],
-            "count": len(entries),
+            "ids": [str(item["track"]["id"]) for item in entries],
         }
 
     def history(self, limit: int = 50) -> dict[str, Any]:
         """Recently played tracks, most recent first."""
-        return {"items": self._enrich(self.library.history(), limit=limit), "count": limit}
+        entries = self._enrich(self.library.history(), limit=limit)
+        return {"items": entries, "length": len(entries)}
+
+    def favorite_ids(self) -> list[str]:
+        return [str(item["track"]["id"]) for item in self.library.favorites()]
 
     def thumbnail_url(self, video_id: str) -> str:
         return THUMBNAIL_TEMPLATE.format(video_id=validate_video_id(video_id))
@@ -387,19 +427,23 @@ class ApiService:
         return {**payload, "cached": False}
 
     def track(self, video_id: str) -> Track:
-        """Metadata for one track as a model object, reusing the cache."""
-        from .cache import track_from_dict
+        """Metadata for one track as a model object, reusing the cache.
 
+        Resolves on a miss. The result is memoised, because the callers that
+        reach for this are all on a request path that the UI hits repeatedly.
+        """
+        cached = self.cached_track(video_id)
+        if cached is not None:
+            return cached
         vid = validate_video_id(video_id)
-        cached = self._info_cache.get(info_cache_key(vid))
-        if isinstance(cached, dict):
-            track = track_from_dict(cached)
-            if track is not None:
-                return track
         payload = self.info(vid)
         track = track_from_dict(payload)
         if track is None:  # pragma: no cover - info() already validated the id
-            raise SourceUnavailableError(f"No metadata available for {vid}.")
+            raise SourceUnavailableError(
+                f"No metadata available for {vid}.",
+                hint="The video may have been removed.",
+            )
+        self._memoise(track)
         return track
 
     # -- playlist ------------------------------------------------------
@@ -514,18 +558,25 @@ class ApiHandler(BaseHTTPRequestHandler):
         *,
         status: HTTPStatus = HTTPStatus.OK,
         cache_control: str = NO_STORE,
+        etag: str | None = None,
     ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache_control)
+        if etag is not None:
+            self.send_header("ETag", etag)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
 
     def _not_found(self, path: str) -> None:
         self._send_json(
-            {"error": "not_found", "message": f"Unknown path: {path}"},
+            {
+                "code": "NOT_FOUND",
+                "error": "NotFoundError",
+                "message": f"Unknown path: {path}",
+            },
             HTTPStatus.NOT_FOUND,
         )
 
@@ -534,7 +585,11 @@ class ApiHandler(BaseHTTPRequestHandler):
         allow = "GET, HEAD, POST" if path in _MUTATING_PATHS else "GET, HEAD"
         self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
         body = json.dumps(
-            {"error": "method_not_allowed", "message": f"Use {allow} for {path}."}
+            {
+                "code": "METHOD_NOT_ALLOWED",
+                "error": "MethodNotAllowed",
+                "message": f"Use {allow} for {path}.",
+            }
         ).encode("utf-8")
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -579,7 +634,11 @@ class ApiHandler(BaseHTTPRequestHandler):
             SourceUnavailableError: HTTPStatus.BAD_GATEWAY,
             MpdError: HTTPStatus.SERVICE_UNAVAILABLE,
         }.get(type(exc), HTTPStatus.INTERNAL_SERVER_ERROR)
-        payload: dict[str, Any] = {"error": type(exc).__name__, "message": exc.message}
+        payload: dict[str, Any] = {
+            "code": _error_code(exc),
+            "error": type(exc).__name__,
+            "message": exc.message,
+        }
         if exc.hint:
             payload["hint"] = exc.hint
         if isinstance(exc, SourceUnavailableError) and exc.upstream_message:
@@ -610,7 +669,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 self._send_json(self.service.player.status())
                 return
             if path == "/queue":
-                self._send_json(self.service.player.queue_state())
+                self._send_json(self.service.player.queue())
                 return
             if path == "/favorites":
                 self._send_json(self.service.favorites())
@@ -726,7 +785,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 if not isinstance(ids, list) or not ids:
                     raise ValidationError(
                         "'ids' must be a non-empty list of video ids.",
-                        hint="Example: {\"ids\": [\"dQw4w9WgXcQ\"]}",
+                        hint='Example: {"ids": ["dQw4w9WgXcQ"]}',
                     )
                 if len(ids) > MAX_BATCH_IDS:
                     raise ValidationError(f"At most {MAX_BATCH_IDS} ids per request.")
@@ -754,9 +813,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 return
             if path == "/player/play":
                 position = body.get("position")
-                self._send_json(
-                    player.play(int(position) if position is not None else None)
-                )
+                self._send_json(player.play(int(position) if position is not None else None))
                 return
             if path == "/player/pause":
                 self._send_json(player.pause())
@@ -783,21 +840,24 @@ class ApiHandler(BaseHTTPRequestHandler):
                 # "shuffle" is the UI's word for MPD's random flag; "repeat_one"
                 # is MPD's single mode. Translating here keeps MPD's vocabulary
                 # out of the HTTP contract.
-                modes = player.set_modes(
-                    shuffle=body.get("shuffle"),
-                    repeat=body.get("repeat"),
-                    repeat_one=body.get("repeat_one"),
-                    consume=body.get("consume"),
+                # set_modes already answers with the fresh status, which is
+                # what the UI paints straight after a mode toggle.
+                self._send_json(
+                    player.set_modes(
+                        shuffle=body.get("shuffle"),
+                        repeat=body.get("repeat"),
+                        repeat_one=body.get("repeat_one"),
+                    )
                 )
-                self._send_json({**modes, "status": player.status()})
                 return
-            if path in ("/favorites", "/favorites/toggle"):
+            if path in ("/favorites/add", "/favorites/remove", "/favorites/toggle"):
                 track = self.service.track(self._field(body, "id", str))
-                favorite = (
-                    library.toggle_favorite(track)
-                    if path == "/favorites/toggle"
-                    else library.add_favorite(track)
-                )
+                if path == "/favorites/add":
+                    favorite = library.add_favorite(track)
+                elif path == "/favorites/remove":
+                    favorite = not library.remove_favorite(track.id)
+                else:
+                    favorite = library.toggle_favorite(track)
                 self._send_json(
                     {
                         "favorite": favorite,
@@ -904,6 +964,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._error(ValidationError("Asset path is not permitted."))
             return
         try:
+            stat = target.stat()
             body = target.read_bytes()
         except OSError:
             self._error(SourceUnavailableError(f"Asset unavailable: {path}"))
@@ -912,11 +973,20 @@ class ApiHandler(BaseHTTPRequestHandler):
             content_type = "text/html; charset=utf-8"
         else:
             content_type = _STATIC_FILES[path][1]
-        # index.html must not be cached, or a returning browser keeps an old
-        # app shell after an upgrade. Fingerprinted assets could be cached, but
-        # these are not fingerprinted, so everything is no-store: simple and
-        # never wrong.
-        self._send_bytes(body, content_type)
+
+        # Assets are revalidated, never blindly reused. They are not
+        # fingerprinted in the URL, so a returning browser must be told when
+        # they changed - otherwise an upgrade leaves a stale app shell behind.
+        # "no-cache" means the browser may store the file but must ask; the
+        # ETag below makes that a 304 with no body instead of another 60 kB.
+        etag = f'"{stat.st_mtime_ns:x}-{len(body):x}"'
+        if self.headers.get("If-None-Match", "").strip() == etag:
+            self.send_response(HTTPStatus.NOT_MODIFIED)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            return
+        self._send_bytes(body, content_type, etag=etag, cache_control="no-cache")
 
     def _serve_events(self) -> None:
         """Stream player state as server-sent events.
@@ -1047,19 +1117,25 @@ class ApiHandler(BaseHTTPRequestHandler):
                 source = self._open_proxied(info, range_header)
             except urllib.error.HTTPError as exc:
                 last_status = exc.code
-                log.warning(
-                    "Upstream HTTP %s for %s (attempt %d)", exc.code, video_id, attempt
-                )
+                log.warning("Upstream HTTP %s for %s (attempt %d)", exc.code, video_id, attempt)
                 if attempt == 1 and exc.code in RETRY_UPSTREAM:
                     continue
                 self._send_json(
-                    {"error": "upstream_error", "message": f"Upstream HTTP {exc.code}"},
+                    {
+                        "code": "UPSTREAM_ERROR",
+                        "error": "upstream_error",
+                        "message": f"Upstream HTTP {exc.code}",
+                    },
                     HTTPStatus.BAD_GATEWAY,
                 )
                 return
             except SourceUnavailableError as exc:
                 self._send_json(
-                    {"error": "upstream_unreachable", "message": exc.message},
+                    {
+                        "code": "UPSTREAM_ERROR",
+                        "error": "upstream_unreachable",
+                        "message": exc.message,
+                    },
                     HTTPStatus.BAD_GATEWAY,
                 )
                 return
@@ -1150,6 +1226,23 @@ class _LocalServer(ThreadingHTTPServer):
     # failed asset load rather than merely a slow page.
     request_queue_size = 128
     allow_reuse_address = True
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """Log a handler crash without the stdlib's full traceback noise.
+
+        socketserver prints an unhandled exception as a traceback at ERROR.
+        For a media server the common case is not a bug: a player seeking or
+        switching track drops the connection mid-response, and a browser closing
+        a tab does the same. Those are normal endings, and a traceback per skip
+        buries the crashes that would matter. Genuinely unexpected errors still
+        get the traceback, at ERROR.
+        """
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError, TimeoutError)):
+            log.debug("Client %s disconnected", client_address)
+            return
+        log.error("Unhandled error serving %s", client_address, exc_info=exc)
+
     # Concurrent SSE feeds. Incremented and decremented around the stream; a
     # simple counter is enough because the bound is what matters, not identity.
     sse_clients = 0

@@ -371,7 +371,7 @@ class TestSecurity:
     def test_unknown_path_404(self, harness: Harness) -> None:
         status, payload = harness.get("/nope")
         assert status == 404
-        assert payload["error"] == "not_found"
+        assert payload["code"] == "NOT_FOUND"
 
     @pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.10", "example.com", "::"])
     def test_server_binds_loopback_only(self, config: Config, host: str) -> None:

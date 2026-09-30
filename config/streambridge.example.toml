@@ -20,6 +20,13 @@
 host = "127.0.0.1"
 port = 8787
 
+# web_directory points at the bundled UI assets. Leave it unset in almost all
+# cases: the default is the web/ directory inside the installed package, which
+# is the only layout StreamBridge is tested against. Override it only for a
+# distro package that splits files across directories; an invalid value turns
+# the web UI off and leaves the JSON API running.
+# web_directory = "/usr/share/streambridge/web"
+
 # ----------------------------------------------------------------- [search]
 [search]
 # Default number of results. 1..100.
@@ -48,6 +55,20 @@ directory = "~/.cache/streambridge"
 ttl_seconds = 300.0
 # Bound on the in-memory cache; the disk cache is pruned to the same size.
 max_entries = 200
+
+# ---------------------------------------------------------------- [library]
+[library]
+# Favourites and play history. Kept apart from [cache] on purpose: the cache
+# may be deleted at any time, and a user's favourites must survive that.
+# Defaults to $XDG_STATE_HOME/streambridge, or ~/.local/state/streambridge.
+#
+# Files here are created 0600 and are never uploaded anywhere.
+directory = "~/.local/state/streambridge"
+
+# ----------------------------------------------------------------- [player]
+[player]
+# Used only until MPD reports a volume of its own. 0..100.
+default_volume = 80
 
 # -------------------------------------------------------------------- [mpd]
 [mpd]

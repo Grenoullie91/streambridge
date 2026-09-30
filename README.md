@@ -1,6 +1,6 @@
 # StreamBridge
 
-Search online music from your terminal, play it through MPD and ncmpcpp.
+Search online music, play it through MPD. Browser, terminal, or any MPD client.
 
 StreamBridge is a small local bridge. It puts a private HTTP service between
 your player and the upstream catalogue, so that MPD, ncmpcpp and any other
@@ -8,11 +8,48 @@ client see stable local URLs instead of short-lived, signed media links that
 expire mid-track.
 
 ```
+                        +-- browser UI      :8787
 search  ->  streambridge-server  ->  MPD  ->  mpc  ->  ncmpcpp  ->  speakers
-  CLI         loopback only         queue             terminal UI
+  CLI           loopback only         queue             terminal UI
                     |
                     +-- yt-dlp: resolves a track to a current audio source
 ```
+
+## The web interface
+
+Start the service and open <http://127.0.0.1:8787/>:
+
+```console
+$ systemctl --user start streambridge
+```
+
+A single page with **Start**, **Search**, **Queue**, **Favourites** and
+**History** views. Full transport control, queue editing by drag and drop,
+live state over server-sent events, and a fallback to polling when the stream
+is unavailable.
+
+It is three static files served by the daemon itself. **No build step, no
+framework, no dependencies**, and no third-party origin: the strict
+`Content-Security-Policy` it is served with allows nothing but `self`, which is
+what makes an injected upstream title unable to execute anything.
+
+```
+src/streambridge/web/
+  index.html   app.css   app.js   manifest.webmanifest   assets/
+```
+
+If you would rather stay in the terminal, everything the browser can do is also
+a command:
+
+```console
+$ streambridge search "big buck bunny" --limit 5
+$ streambridge play 5NV6Rdv1a3I
+$ streambridge queue
+$ streambridge volume 60
+$ streambridge favorite 5NV6Rdv1a3I
+```
+
+## Why
 
 - **No Python dependencies.** The HTTP server, TOML config and CLI are standard
   library only. `yt-dlp` and MPD do the heavy lifting, and you already run MPD.
@@ -132,7 +169,7 @@ $ streambridge search "artist name" --json | jq -r '.results[].id'
 
 Config lives in `$XDG_CONFIG_HOME/streambridge/config.toml`. Every key is
 optional; the defaults work on a fresh install. See
-[`config/config.example.toml`](config/config.example.toml) for a fully
+[`config/streambridge.example.toml`](config/streambridge.example.toml) for a fully
 commented file and [docs/configuration.md](docs/configuration.md) for details.
 
 ```toml
@@ -199,27 +236,48 @@ Full reference: [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Documentation
 
+**Using it**
+
 - [docs/installation.md](docs/installation.md) — install and MPD setup
 - [docs/configuration.md](docs/configuration.md) — every config key
-- [docs/architecture.md](docs/architecture.md) — how the layers fit together
-- [docs/mpd-config.md](docs/mpd-config.md) — working `mpd.conf`
+- [docs/mpd.md](docs/mpd.md) — how StreamBridge drives MPD
+- [docs/mpd-config.md](docs/mpd-config.md) — getting MPD itself running
 - [docs/ncmpcpp.md](docs/ncmpcpp.md) — terminal player setup
-- [docs/security.md](docs/security.md) — threat model and privacy guarantees
-- [docs/verification.md](docs/verification.md) — how the tests check behaviour
 - [docs/troubleshooting.md](docs/troubleshooting.md) — symptom reference
+
+**Understanding it**
+
+- [docs/architecture.md](docs/architecture.md) — how the layers fit together
+- [docs/privacy.md](docs/privacy.md) — what is stored, what leaves the machine
+- [SECURITY.md](SECURITY.md) — threat model, and how to report a problem
+- [docs/security.md](docs/security.md) — the security properties in detail
+- [docs/verification.md](docs/verification.md) — how the tests check behaviour
+- [docs/testing.md](docs/testing.md) — the test layers and how to write one
+
+**Working on it**
+
+- [docs/development.md](docs/development.md) — layout, conventions, adding routes
+- [CONTRIBUTING.md](CONTRIBUTING.md) — the pull request process
 
 ## Development
 
 ```console
-$ pip install -e ".[dev]"
-$ ruff check . && ruff format --check . && mypy
-$ pytest                       # unit + integration, no network
-$ pytest -m live               # optional: contacts the real upstream service
-$ ./scripts/e2e-test.sh        # optional: full path through MPD to the speakers
+$ make setup
+$ make verify                   # lint, types, tests, privacy audit
 ```
 
-The suite is offline by design: the subprocess layer is replaced by a fake, so
-no test reaches the network. The live tests are opt-in and marked `-m live`.
+That is what CI runs. Individually:
+
+```console
+$ make test                     # unit + integration, offline
+$ ruff check . && ruff format --check . && mypy
+$ make privacy                  # tree and full history
+$ make live                     # optional: real MPD, real audio
+```
+
+The suite is offline by design: the subprocess layer and MPD are both replaced
+by fakes, so no test reaches the network or your player. `make live` is the only
+command that does, and it is opt-in.
 
 ## Legal and ethical use
 

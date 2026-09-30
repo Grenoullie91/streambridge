@@ -25,10 +25,12 @@ from .errors import (
     StreamBridgeError,
     ValidationError,
 )
+from .library import LibraryStore
 from .logging import log_level_from_env, setup_logging
 from .metadata import format_duration
 from .models import SearchType, Track, validate_playlist_id, validate_video_id
 from .mpd import MpdClient
+from .youtube import ExtractorClient
 
 # ANSI colour is opt-out via NO_COLOR, and never required for correctness:
 # every helper degrades to plain text when stdout is not a terminal.
@@ -78,6 +80,18 @@ class ServerClient:
 
     def _get(self, path: str) -> dict[str, Any]:
         url = f"{self._base}{path}"
+        # Assert the scheme rather than trusting it. Both halves of the URL come
+        # from configuration, and the server refuses a non-loopback bind, so
+        # this cannot fire in practice - which is exactly why a check that can
+        # never fire is worth writing: it makes "this only ever speaks HTTP"
+        # an enforced invariant instead of a claim in a comment, and it is what
+        # the security audit can point at.
+        scheme = urllib.parse.urlparse(url).scheme
+        if scheme not in ("http", "https"):
+            raise ValidationError(
+                f"Refusing to open a {scheme or 'schemeless'} URL.",
+                hint="server.host and server.port must describe an http endpoint.",
+            )
         try:
             with urllib.request.urlopen(url, timeout=self.timeout) as response:  # noqa: S310
                 raw = response.read()
@@ -358,6 +372,109 @@ def _mpd_passthrough(args: argparse.Namespace, config: Config) -> int:
     return ExitCode.OK
 
 
+def _mpd_seek(args: argparse.Namespace, config: Config) -> int:
+    """Seek the current track to an absolute offset."""
+    mpd = MpdClient(config)
+    try:
+        out = mpd.seek(args.seconds)
+    except StreamBridgeError as exc:
+        print(f"Error: {exc.user_message()}", file=sys.stderr)
+        return ExitCode.MPD_UNREACHABLE
+    if out.strip() and not args.json:
+        print(out.strip())
+    return ExitCode.OK
+
+
+def cmd_volume(args: argparse.Namespace, config: Config) -> int:
+    """Show or set the output volume."""
+    mpd = MpdClient(config)
+    try:
+        if args.percent is None:
+            status = mpd.status()
+            payload = {"volume": status.volume, "percent": status.volume_percent}
+            if args.json:
+                print(json.dumps(payload))
+            elif status.volume:
+                print(status.volume)
+            return ExitCode.OK
+        mpd.volume(args.percent)
+    except StreamBridgeError as exc:
+        print(f"Error: {exc.user_message()}", file=sys.stderr)
+        return ExitCode.MPD_UNREACHABLE
+    if not args.json:
+        print(f"Volume set to {max(0, min(100, args.percent))}%")
+    return ExitCode.OK
+
+
+def cmd_queue(args: argparse.Namespace, config: Config) -> int:
+    """Print the queue as it currently stands in MPD."""
+    mpd = MpdClient(config)
+    try:
+        entries = mpd.queue()
+    except StreamBridgeError as exc:
+        print(f"Error: {exc.user_message()}", file=sys.stderr)
+        return ExitCode.MPD_UNREACHABLE
+    rows = [entry.to_dict() for entry in entries]
+    if args.json:
+        print(json.dumps({"items": rows, "length": len(rows)}))
+        return ExitCode.OK
+    if not rows:
+        print("The queue is empty.")
+        return ExitCode.OK
+    for row in rows:
+        seconds = row.get("duration")
+        stamp = f"{seconds // 60}:{seconds % 60:02d}" if isinstance(seconds, int) else "--:--"
+        print(f"{row['position']:>3}. [{stamp}] {row['name']}")
+    return ExitCode.OK
+
+
+def cmd_favorites(args: argparse.Namespace, config: Config) -> int:
+    """List the favourites stored on this machine."""
+    store = LibraryStore(config.state_directory)
+    items = store.favorites()
+    if args.json:
+        print(json.dumps({"items": items, "length": len(items)}))
+        return ExitCode.OK
+    if not items:
+        print("No favourites yet.")
+        return ExitCode.OK
+    for item in items:
+        track = item["track"]
+        print(f"{track['id']}  {track['title']}")
+    return ExitCode.OK
+
+
+def cmd_favorite(args: argparse.Namespace, config: Config) -> int:
+    """Add one track to the favourites, resolving its metadata first."""
+    video_id = validate_video_id(args.id[0])
+    client = ExtractorClient(config)
+    track = Track(
+        id=video_id,
+        title=client.get_info(video_id).title,
+    )
+    added = LibraryStore(config.state_directory).add_favorite(track)
+    payload = {"added": added, "id": video_id}
+    if args.json:
+        print(json.dumps(payload))
+    else:
+        print("Added to favourites." if added else "Already a favourite.")
+    return ExitCode.OK
+
+
+def cmd_history(args: argparse.Namespace, config: Config) -> int:
+    """List the tracks played most recently first."""
+    items = LibraryStore(config.state_directory).history()
+    if args.json:
+        print(json.dumps({"items": items, "length": len(items)}))
+        return ExitCode.OK
+    if not items:
+        print("Nothing played yet.")
+        return ExitCode.OK
+    for item in items:
+        print(f"{item['track']['id']}  {item['track']['title']}")
+    return ExitCode.OK
+
+
 def cmd_clear(args: argparse.Namespace, config: Config) -> int:
     if not args.yes:
         print("This empties the MPD queue (online tracks only, no music files).")
@@ -484,11 +601,38 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name, helptext in (
         ("next", "Next track"),
+        ("previous", "Previous track"),
         ("pause", "Pause playback"),
         ("stop", "Stop playback"),
     ):
         p = new_command(name, help=helptext)
         p.set_defaults(func=_mpd_passthrough, command=name)
+
+    p = new_command("seek", help="Seek to an absolute position in seconds")
+    p.add_argument("seconds", type=float, help="Offset from the start of the track")
+    p.set_defaults(func=_mpd_seek)
+
+    p = new_command("volume", help="Set the output volume")
+    p.add_argument(
+        "percent",
+        nargs="?",
+        type=int,
+        help="Level 0-100; omit to show the current level",
+    )
+    p.set_defaults(func=cmd_volume)
+
+    p = new_command("queue", help="List the current queue")
+    p.set_defaults(func=cmd_queue)
+
+    p = new_command("favorites", help="Show saved favourites")
+    p.set_defaults(func=cmd_favorites)
+
+    p = new_command("favorite", help="Add a track to the favourites")
+    p.add_argument("id", nargs=1, help="Video id (11 characters)")
+    p.set_defaults(func=cmd_favorite)
+
+    p = new_command("history", help="Show recently played tracks")
+    p.set_defaults(func=cmd_history)
 
     return parser
 
