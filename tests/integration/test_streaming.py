@@ -20,7 +20,7 @@ from typing import Any, ClassVar
 
 import pytest
 
-from conftest import INFO_PAYLOAD, SEARCH_PAYLOAD, FakeRunner
+from conftest import FAKE_EXECUTABLE, INFO_PAYLOAD, SEARCH_PAYLOAD, FakeRunner
 from streambridge.api import ApiService, make_server
 from streambridge.config import Config
 from streambridge.models import StreamInfo
@@ -178,7 +178,7 @@ def upstream(monkeypatch: pytest.MonkeyPatch) -> Iterator[UpstreamFixture]:
 def client(config: Config, fake_runner: FakeRunner, upstream: UpstreamFixture) -> Iterator[str]:
     fake_runner.add_json("ytsearch", SEARCH_PAYLOAD)
     fake_runner.add_json("watch?v=", INFO_PAYLOAD)
-    ytdlp = ExtractorClient(config, runner=fake_runner, executable="yt-dlp")
+    ytdlp = ExtractorClient(config, runner=fake_runner, executable=FAKE_EXECUTABLE)
     service = ApiService(config, client=ytdlp, resolver=StubResolver(upstream.url))  # type: ignore[arg-type]
     # Port 0: the shared config names a fixed port, which would collide with the
     # other integration modules in a full run.
@@ -333,7 +333,7 @@ def test_full_playback_chain(
     )
     fake_runner.add_json("ytsearch", SEARCH_PAYLOAD)
     fake_runner.add_json("watch?v=", INFO_PAYLOAD)
-    ytdlp = ExtractorClient(config, runner=fake_runner, executable="yt-dlp")
+    ytdlp = ExtractorClient(config, runner=fake_runner, executable=FAKE_EXECUTABLE)
     mpd = FakeMpd(config)
     service = ApiService(
         config,

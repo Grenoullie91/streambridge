@@ -18,7 +18,7 @@ from typing import Any, ClassVar
 
 import pytest
 
-from conftest import INFO_PAYLOAD, SEARCH_PAYLOAD, FakeRunner
+from conftest import FAKE_EXECUTABLE, INFO_PAYLOAD, SEARCH_PAYLOAD, FakeRunner
 from streambridge.api import ApiService, make_server
 from streambridge.config import Config
 from streambridge.errors import ValidationError
@@ -82,7 +82,7 @@ def harness(config: Config, fake_runner: FakeRunner) -> Iterator[Harness]:
     fake_runner.add_json("ytsearch", SEARCH_PAYLOAD)
     fake_runner.add_json("watch?v=", INFO_PAYLOAD)
     fake_runner.add_text("--version", "2026.08.19")
-    client = ExtractorClient(config, runner=fake_runner, executable="yt-dlp")
+    client = ExtractorClient(config, runner=fake_runner, executable=FAKE_EXECUTABLE)
     service = ApiService(config, client=client, resolver=StreamResolver(config, client))
     # Port 0 asks the OS for a free port, so parallel runs never collide.
     harness_ = Harness(service, make_server(replace(config, port=0), service=service))
@@ -270,7 +270,7 @@ class TestResourceBounds:
 
         fake_runner.add_json("ytsearch", SEARCH_PAYLOAD)
         fake_runner.add_json("watch?v=", INFO_PAYLOAD)
-        client = ExtractorClient(config, runner=fake_runner, executable="yt-dlp")
+        client = ExtractorClient(config, runner=fake_runner, executable=FAKE_EXECUTABLE)
         service = ApiService(config, client=client, resolver=StreamResolver(config, client))
         server = make_server(dc_replace(config, port=0), service=service)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

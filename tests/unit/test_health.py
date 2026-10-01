@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
 
+from conftest import FAKE_EXECUTABLE
 from streambridge.config import Config
 from streambridge.health import (
     COMPONENTS,
@@ -136,10 +138,19 @@ class TestBuildReport:
     def test_outdated_extractor_gets_a_note(
         self, config: Config, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # The version comparison is the only part that needs controlling: the
-        # binary itself is really present in the development environment.
+        # Both halves need controlling, not just the comparison: the report
+        # looks up the configured extractor on PATH, so asserting "present"
+        # against a real yt-dlp tests the machine the test runs on rather than
+        # the code. A name that resolves everywhere keeps it hermetic.
+        named = dataclasses.replace(config, extractor_path=FAKE_EXECUTABLE)
         monkeypatch.setattr("streambridge.health._version_at_least", lambda *a: False)
-        report = build_report(config)
+        # The stub resolves but reports no version, so "outdated" cannot be
+        # derived from it - the version has to be supplied, not the binary.
+        monkeypatch.setattr(
+            "streambridge.youtube.ExtractorClient.version",
+            lambda self: "2020.01.01",
+        )
+        report = build_report(named)
         check = next(c for c in report.checks if c.name == "yt-dlp")
         assert check.ok is True
         assert "update recommended" in (check.detail or "")
@@ -162,7 +173,7 @@ class TestBuildReport:
         from streambridge.youtube import ExtractorClient
 
         monkeypatch.setattr(ExtractorClient, "version", lambda self: None)
-        report = build_report(config)
+        report = build_report(dataclasses.replace(config, extractor_path=FAKE_EXECUTABLE))
         check = next(c for c in report.checks if c.name == "yt-dlp")
         assert check.ok is True
         assert check.version is None

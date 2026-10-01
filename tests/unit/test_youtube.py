@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from conftest import INFO_PAYLOAD, SEARCH_PAYLOAD, FakeRunner
+from conftest import FAKE_EXECUTABLE, INFO_PAYLOAD, SEARCH_PAYLOAD, FakeRunner
 from streambridge.config import config_from_mapping
 from streambridge.errors import (
     DependencyError,
@@ -43,9 +43,18 @@ def make_client(runner: FakeRunner, **overrides: Any) -> ExtractorClient:
     config = config_from_mapping(
         {"timeouts": {"request": 5.0, "resolve": 5.0, "info": 5.0}, **overrides}
     )
-    # executable defaults to the configured value so dependency detection is
-    # exercised; an extractor_path override replaces it.
-    return ExtractorClient(config, runner=runner, executable=config.extractor_path)
+    # The executable must be a name that resolves on any machine.
+    #
+    # The client's require() looks the path up before it hands anything to the
+    # runner, so a test that relied on the configured "yt-dlp" passed only
+    # where yt-dlp happened to be installed and failed on a CI runner that has
+    # none. An explicit extractor_path is honoured, because the tests below
+    # that care about a *missing* extractor pass their own unresolvable name
+    # and need it to stay missing.
+    extractor = config.extractor_path
+    if extractor == "yt-dlp":
+        extractor = FAKE_EXECUTABLE
+    return ExtractorClient(config, runner=runner, executable=extractor)
 
 
 class TestDependency:
@@ -64,8 +73,9 @@ class TestDependency:
         )
         assert client.is_available() is False
 
-    def test_is_available_true_for_real_extractor(self) -> None:
-        # The development environment ships yt-dlp; assert detection works.
+    def test_is_available_true_when_the_executable_resolves(self) -> None:
+        # Not "a real extractor", just a resolvable name. Asserting that the
+        # development machine has yt-dlp installed is a test of the machine.
         assert make_client(FakeRunner()).is_available() is True
 
     def test_version_parsed(self) -> None:
@@ -341,6 +351,8 @@ class TestArgumentSafety:
         runner = FakeRunner()
         runner.add_json("ytsearch", SEARCH_PAYLOAD)
         make_client(runner, youtube={"cookies_from_browser": "firefox"}).search("x", limit=1)
+        # The point of the test is the argv shape, so it goes through a client
+        # whose executable resolves everywhere; see make_client.
         call = runner.calls[-1]
         assert call[call.index("--cookies-from-browser") + 1] == "firefox"
 

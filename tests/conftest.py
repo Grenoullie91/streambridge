@@ -23,6 +23,16 @@ from streambridge.proc import CompletedRun
 SAMPLE_ID = "5NV6Rdv1a3I"
 SAMPLE_ID_2 = "CCHdMIEGaaM"
 
+# An executable name that resolves on any POSIX system.
+#
+# Tests pass a FakeRunner, so no real subprocess runs - but ExtractorClient
+# resolves the executable path before it hands anything to the runner. A test
+# that asked for "yt-dlp" therefore passed only where yt-dlp was installed,
+# and failed on a CI runner that has none. Using a name that always exists
+# removes the host from the result; the tests that care about a genuinely
+# missing extractor pass their own unresolvable name.
+FAKE_EXECUTABLE = "sh"
+
 
 class FakeRunner:
     """Scripted stand-in for :class:`streambridge.proc.SubprocessRunner`.

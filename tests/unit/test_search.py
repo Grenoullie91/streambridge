@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import SEARCH_PAYLOAD, FakeRunner
+from conftest import FAKE_EXECUTABLE, SEARCH_PAYLOAD, FakeRunner
 from streambridge.cache import DiskSearchCache, TtlCache
 from streambridge.config import Config
 from streambridge.errors import RateLimitError, ValidationError
@@ -19,7 +19,7 @@ VALID_PLAYLIST = "PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf"
 
 
 def build(config: Config, runner: FakeRunner) -> tuple[SearchService, FakeRunner]:
-    client = ExtractorClient(config, runner=runner, executable="yt-dlp")
+    client = ExtractorClient(config, runner=runner, executable=FAKE_EXECUTABLE)
     return SearchService(config, client), runner
 
 
@@ -84,7 +84,7 @@ class TestSearch:
         first.search("Disk Hit")
 
         # A fresh service with only the disk cache still answers.
-        client = ExtractorClient(config, runner=fake_runner, executable="yt-dlp")
+        client = ExtractorClient(config, runner=fake_runner, executable=FAKE_EXECUTABLE)
         second = SearchService(
             config,
             client,

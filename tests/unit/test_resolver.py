@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from conftest import INFO_PAYLOAD, FakeRunner
+from conftest import FAKE_EXECUTABLE, INFO_PAYLOAD, FakeRunner
 from streambridge.config import config_from_mapping
 from streambridge.errors import RateLimitError, SourceUnavailableError, ValidationError
 from streambridge.proc import CompletedRun
@@ -40,7 +40,7 @@ def build(overrides: dict | None = None) -> tuple[StreamResolver, FakeRunner]:
     )
     runner = FakeRunner()
     runner.add_json("watch?v=", INFO_PAYLOAD)
-    client = ExtractorClient(config, runner=runner, executable="yt-dlp")
+    client = ExtractorClient(config, runner=runner, executable=FAKE_EXECUTABLE)
     return StreamResolver(config, client), runner
 
 
