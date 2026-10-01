@@ -72,15 +72,24 @@ available" and bot checks.
 ## 3. Install StreamBridge
 
 ```bash
-pipx install streambridge
-```
-
-From a checkout, for development:
-
-```bash
 git clone https://github.com/Grenoullie91/streambridge
 cd streambridge
-pip install -e ".[dev]"
+./scripts/install.sh
+```
+
+For a development setup, add `--dev`, which also installs the test and lint
+tools:
+
+```bash
+./scripts/install.sh --dev
+```
+
+**There is no PyPI release.** `pip install streambridge` does not work, and the
+release workflow attaches the built wheel and sdist to the GitHub release
+instead. To install from a checkout without the script:
+
+```bash
+pip install -e .
 ```
 
 Verify:
@@ -150,10 +159,21 @@ argcomplete --shell bash > ~/.local/share/bash-completion/completions/streambrid
 ## Uninstall
 
 ```bash
-systemctl --user disable --now streambridge
+./scripts/uninstall.sh --yes
+```
+
+That stops and disables the service, removes the unit, the two entry points and
+the virtual environment, and keeps your configuration, favourites and history.
+`--purge` deletes those too.
+
+By hand, if you prefer:
+
+```bash
+systemctl --user disable --now streambridge.service
 rm ~/.config/systemd/user/streambridge.service
-pipx uninstall streambridge
-rm -rf ~/.cache/streambridge
+rm ~/.config/systemd/user/streambridge.service.d/playlist-dir.conf
+rm ~/.local/bin/streambridge ~/.local/bin/streambridge-server
+rm -rf .venv
 ```
 
 Nothing outside your home directory is modified. The MPD database and your

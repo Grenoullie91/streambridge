@@ -229,6 +229,43 @@ address, and the token is a credential.
 The app does not guess. It does not scan the network, and it does not talk to
 anything but the address you gave it - see the note on discovery below.
 
+### 5. If it says "Zugriffstoken fehlt"
+
+The app distinguishes the two failures that look alike from the outside, because
+they need opposite things from you:
+
+| Message | Meaning | What to do |
+|---|---|---|
+| **Zugriffstoken fehlt** | The server answered, and refused the request | Tap **Token eingeben** and paste the token. The token field comes up focused and unmasked. |
+| **Server nicht erreichbar** | Nothing answered at that address | Check Wi-Fi, whether the computer is on, whether the service is running, and the address. |
+
+This distinction exists because getting it wrong is expensive. A server that
+answers `401` is reachable, and the four checks under *Server nicht erreichbar*
+are all true of it; the only thing wrong is the key, and nothing on that screen
+would have told you so.
+
+**Erneut versuchen** is deliberately not offered for a `401`. Repeating the
+same request without the token gets the same refusal, so the button would only
+look busy.
+
+To check from a shell which of the two you have:
+
+```bash
+$ curl -s -o /dev/null -w '%{http_code}\n' http://192.0.2.20:8787/queue
+401                       # reachable, needs a token
+$ curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" \
+      http://192.0.2.20:8787/queue
+200                       # token correct
+```
+
+The server logs every refusal as a warning naming the path, so an app that
+cannot connect is visible from the desktop:
+
+```bash
+$ journalctl --user -u streambridge -f
+streambridge.api WARNING Refused GET /player/status from a network client: no valid access token
+```
+
 ## Using it
 
 Four tabs and a player.

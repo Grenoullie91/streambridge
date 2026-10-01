@@ -38,6 +38,11 @@ jobs:
           # with '.[dev]' is what makes that work; "pip install build twine"
           # alone left the gate running with no pytest and failing for a
           # reason that has nothing to do with the code.
+          #
+          # twine is here for `twine check`, which validates the long
+          # description against PyPI's rules. Nothing is uploaded: this project
+          # is not published to PyPI, so the distributions are attached to the
+          # GitHub release instead. See docs/installation.md.
           pip install -e '.[dev]' build twine
 
       - name: Verify before publishing
@@ -65,13 +70,6 @@ jobs:
             echo "A tag that disagrees with the source is the most confusing release bug there is." >&2
             exit 1
           fi
-
-      - name: Publish to PyPI
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: python -m twine upload dist/*
 
       - name: Create the GitHub release
         if: startsWith(github.ref, 'refs/tags/v')

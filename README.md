@@ -92,15 +92,22 @@ $ streambridge doctor
 ## Install
 
 ```console
-$ pipx install streambridge        # or: pip install --user streambridge
+$ git clone https://github.com/Grenoullie91/streambridge
+$ cd streambridge
+$ ./scripts/install.sh             # runtime only
+$ ~/.local/bin/streambridge --version
 ```
 
-From a checkout:
+`scripts/install.sh` puts both entry points in `~/.local/bin` and, on a system
+with a user systemd instance, installs `streambridge.service`. Add `--dev` for a
+development setup, `--no-service` to skip the unit. `scripts/uninstall.sh`
+removes all of it again.
 
-```console
-$ pip install -e ".[dev]"
-$ streambridge --version
-```
+The project is not published to PyPI, so `pip install streambridge` will not
+work. The install is deliberately a script rather than a package index: it needs
+no privileges, writes only under `$HOME`, and a user unit with a
+`ProtectHome=read-only` sandbox has to be wired up for a given machine anyway -
+see [`docs/installation.md`](docs/installation.md).
 
 ## Quick start
 
