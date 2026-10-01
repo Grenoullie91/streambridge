@@ -124,9 +124,9 @@ the network needs two things, and the second is not optional:
 ```toml
 # ~/.config/streambridge/config.toml
 [server]
-host = "192.0.2.20"      # a LAN address, not 0.0.0.0 - see below
+host = "0.0.0.0"          # see the note below before changing this
 allow_lan = true
-access_token = "…"         # required; LAN access without a token is refused
+access_token = "…"        # required; LAN access without a token is refused
 ```
 
 Generate a token with:
@@ -137,10 +137,12 @@ $ python3 -c 'import secrets; print(secrets.token_urlsafe(24))'
 
 Three deliberate choices behind that:
 
-- **`host` is a specific LAN address, not `0.0.0.0`.** Binding every
-  interface also binds the VPN, the container bridges and every other network
-  the machine happens to have. One address means the phone works and the
-  other networks are not involved.
+- **`host` is `0.0.0.0`, not a named interface.** This is the part that looks
+  wrong and is not: a server bound to one non-loopback address stops serving
+  `127.0.0.1`, which takes the browser on this machine down with it. Every
+  interface is protected by the same token, and the firewall decides what is
+  reachable at all. Bind a named interface instead only if you want the VPN
+  or a container bridge left out - and move the browser's URL with it.
 - **A token is mandatory.** The server refuses to start on a network address
   without one, so turning on LAN access can never quietly publish an
   unauthenticated player to everyone at the coffee shop.
@@ -151,13 +153,42 @@ Three deliberate choices behind that:
 Via the environment, which is what a systemd unit uses:
 
 ```ini
-Environment=STREAMBRIDGE_HOST=192.0.2.20
+Environment=STREAMBRIDGE_HOST=0.0.0.0
 Environment=STREAMBRIDGE_ALLOW_LAN=true
 Environment=STREAMBRIDGE_ACCESS_TOKEN=…
 ```
 
 Put the token in `~/.config/streambridge/secrets.env` (mode `600`), not in the
 unit file, if the unit is ever read by something you do not control.
+
+A systemd unit sets `Environment=`, and that overrides `config.toml`. So a
+drop-in is the honest place for this, leaving the unit in the repository
+untouched:
+
+```console
+$ mkdir -p ~/.config/systemd/user/streambridge.service.d
+$ echo "STREAMBRIDGE_ACCESS_TOKEN=$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')" \
+    > ~/.config/streambridge/secrets.env
+$ chmod 600 ~/.config/streambridge/secrets.env
+```
+
+```ini
+# ~/.config/systemd/user/streambridge.service.d/lan.conf
+[Service]
+Environment=STREAMBRIDGE_HOST=0.0.0.0
+Environment=STREAMBRIDGE_ALLOW_LAN=true
+EnvironmentFile=%h/.config/streambridge/secrets.env
+```
+
+```console
+$ systemctl --user daemon-reload && systemctl --user restart streambridge
+$ ss -tln | grep 8787
+$ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/queue      # 200, local
+$ curl -s -o /dev/null -w '%{http_code}\n' http://192.0.2.20:8787/queue      # 401, needs the token
+```
+
+To undo it: delete the drop-in, `daemon-reload`, restart. The server is back
+on loopback only.
 
 ### 2. Firewall
 

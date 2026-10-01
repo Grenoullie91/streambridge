@@ -42,6 +42,10 @@ jobs:
         run: pip-audit --strict
 
       - name: Static analysis (bandit)
+        # The three findings this suppresses - importing subprocess, calling
+        # it, and opening a URL - are reviewed individually in src/, each with
+        # a nosec that says why. This is a plain -q run, not an --ignore-skip
+        # file, so a new finding fails the build instead of being absorbed.
         run: bandit -q -r src/streambridge -f screen
 
   privacy:

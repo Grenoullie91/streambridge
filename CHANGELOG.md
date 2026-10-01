@@ -136,6 +136,13 @@ same server and therefore the same MPD as the browser and ncmpcpp.
 - The search results header was drawn underneath the first result rather than
   above it.
 
+- Binding a network address no longer silently takes `127.0.0.1` with it.
+  Reaching a non-loopback address left the local client unserved, which broke
+  the browser on the very machine running the server. Serving both from one
+  process needs `0.0.0.0`, and the token is what protects the extra
+  interfaces; the documentation now says so rather than recommending a bind
+  address that does not work.
+
 ### Security
 
 - The server refuses to bind any address other than loopback.

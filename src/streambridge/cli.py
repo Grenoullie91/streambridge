@@ -93,7 +93,10 @@ class ServerClient:
                 hint="server.host and server.port must describe an http endpoint.",
             )
         try:
-            with urllib.request.urlopen(url, timeout=self.timeout) as response:  # noqa: S310
+            # B310: the scheme is checked by the guard a few lines above,
+            # which refuses anything that is not http or https, so file:// and
+            # custom schemes cannot reach this call.
+            with urllib.request.urlopen(url, timeout=self.timeout) as response:  # noqa: S310  # nosec B310
                 raw = response.read()
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", "replace")

@@ -48,6 +48,7 @@ from .errors import (
     ValidationError,
 )
 from .library import LibraryStore
+from .logging import redact, redact_url
 from .models import SearchType, StreamInfo, Track, validate_playlist_id, validate_video_id
 from .mpd import MpdClient
 from .player import PlayerService
@@ -601,9 +602,20 @@ class ApiHandler(BaseHTTPRequestHandler):
         into a 401. Called at the top of both do_GET and do_POST, before any
         routing, so a token-less network client cannot reach state it should
         not see even by guessing paths.
+
+        A refusal is logged, at WARNING and without the address. This is the
+        one request that is both security-relevant and the one a user needs to
+        see: without it, a phone that cannot connect leaves nothing at all in
+        the journal, and the only way to find out whether it arrived is to
+        guess.
         """
         if self._authorised(path):
             return
+        log.warning(
+            "Refused %s %s from a network client: no valid access token",
+            self.command,
+            redact_url(self.path),
+        )
         raise AuthorizationError(
             "This server requires an access token.",
             hint="Send it as 'Authorization: Bearer <token>'.",
@@ -704,10 +716,20 @@ class ApiHandler(BaseHTTPRequestHandler):
         return "text/html" in self.headers.get("Accept", "").lower()
 
     def log_message(self, fmt: str, *args: Any) -> None:
-        if not self.quiet:
-            log.debug("%s - %s", self.address_string(), fmt % args)
-        else:
+        """Access log, at DEBUG.
+
+        The peer is included only when this handler is *not* quiet, which the
+        server sets when the log level is DEBUG. Without that there is no way
+        to tell "the phone never reached us" from "the phone reached us and
+        was refused", which is the first question anyone asks when a client
+        cannot connect. The address goes through the same redaction as every
+        other log line, so turning this on cannot start writing client IPs to
+        the journal.
+        """
+        if self.quiet:
             log.debug("http %s", fmt % args)
+        else:
+            log.debug("%s - %s", redact(self.address_string()), fmt % args)
 
     def _send_json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

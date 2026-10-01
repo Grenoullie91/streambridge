@@ -1,12 +1,19 @@
 """Process execution helpers.
 
-Every external program is started through :class:`SubprocessRunner`, which means:
+Every external program is started through :class:`SubprocessRunner`, which
+means:
 
-* arguments are always a list, never a shell string
-* a timeout is always enforced
-* the child is always reaped, so no zombies survive
-* stdout and stderr are captured separately
-* on timeout the whole process group is killed
+- arguments are always a list, never a shell string
+- a timeout is always enforced
+- the child is always reaped, so no zombies survive
+- stdout and stderr are captured separately
+- on timeout the whole process group is killed
+
+The security audit flags two patterns in this module: importing ``subprocess``
+at all and calling it. Both are suppressed at their single site
+with a suppression that says why, rather than in a blanket config that would
+silently cover any subprocess added later. This module *is* the project's
+subprocess boundary; there is nowhere else it could live.
 """
 
 from __future__ import annotations
@@ -16,7 +23,7 @@ import logging
 import os
 import shutil
 import signal
-import subprocess
+import subprocess  # nosec B404
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,7 +87,13 @@ class SubprocessRunner(CommandRunner):
         try:
             # start_new_session puts the child in its own process group so a
             # timeout can kill it *and* anything it spawned.
-            proc = subprocess.Popen(  # noqa: S603 - list argv, shell=False
+            # Bandit flags every subprocess call. The finding is answered at
+            # this one site rather than globally: the argument vector below is
+            # a list, so no shell is involved, and shell=False is stated
+            # explicitly. The arguments themselves are validated by the
+            # callers; see the module docstring.
+            #
+            proc = subprocess.Popen(  # nosec B603  # noqa: S603, nosec B603
                 argv,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

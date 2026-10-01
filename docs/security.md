@@ -21,16 +21,28 @@ is opt-in and takes two keys together:
 
 ```toml
 [server]
-host = "192.0.2.20"     # a specific LAN address, not 0.0.0.0
+host = "0.0.0.0"
 allow_lan = true
 access_token = "…"
 ```
 
-**Why a specific address and not `0.0.0.0`.** Binding every interface also
-binds a VPN, a container bridge, a guest interface and anything else the
-machine happens to have. Naming one address means the phone works and the
-other networks are not part of the decision. Anyone who wants the wildcard can
-have it, but they have to type it.
+**Why `0.0.0.0`, given that binding every interface looks careless.** Because
+the alternative is worse than it first appears. Binding one specific non-
+loopback address means `127.0.0.1` is no longer served at all - and the
+browser on the machine itself is not a nice-to-have, it is the primary client.
+The choice is not "LAN only" versus "everything"; it is "everything" or
+"LAN without the local interface", and the second one breaks a working setup.
+
+What actually protects the extra interfaces is the token, which every one of
+them is subject to, and the firewall, which decides what is reachable at all.
+If you would rather bind one interface and keep `127.0.0.1`, run a second
+instance on a different port - two servers, one MPD - which works but is two
+processes to keep alive.
+
+Binding a named interface *is* the right call if the machine has a VPN or a
+container bridge you would rather not expose at all. In that case the browser
+moves to `http://<that address>:8787/` and stays token-free, because a request
+from the machine is trusted whatever address it arrives on.
 
 **Why the token is not optional.** With LAN access on and no token, anyone who
 can reach the port can play, pause, skip, change the volume and empty the
