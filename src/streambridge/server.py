@@ -82,6 +82,16 @@ def check_dependencies(config: Config, *, as_json: bool = False) -> int:
     return EXIT_OK if report.ok else EXIT_MISSING_DEPENDENCY
 
 
+def access_logging(config: Config) -> bool:
+    """True when the configuration asks for per-request logging.
+
+    DEBUG and nothing below it. Access logging is off by default so that a
+    client address never reaches the journal unless somebody has explicitly
+    turned the level down.
+    """
+    return config.log_level.upper() == "DEBUG"
+
+
 def _load(args: argparse.Namespace) -> Config:
     """Load configuration with command line flags taking precedence."""
     overrides: dict[str, object] = {}
@@ -147,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         service = ApiService(config, client=client)
-        server = make_server(config, service=service)
+        server = make_server(config, service=service, log_access=access_logging(config))
     except StreamBridgeError as exc:
         print(f"Error: {exc.user_message()}", file=sys.stderr)
         return int(exc.exit_code)

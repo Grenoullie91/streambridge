@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from conftest import INFO_PAYLOAD, SEARCH_PAYLOAD, FakeRunner
+from conftest import INFO_PAYLOAD, SEARCH_PAYLOAD, FakeMpd, FakeRunner
 from streambridge.api import ApiHandler, ApiService, make_server
 from streambridge.config import Config, is_lan_bind, is_loopback_host, lan_bind_problem
 from streambridge.errors import ValidationError
@@ -42,10 +42,24 @@ VALID_ID = "5NV6Rdv1a3I"
 
 
 def _build(config: Config, fake_runner: FakeRunner) -> ApiService:
+    """A service with no external dependency left.
+
+    FakeMpd matters here: /player/status asks MPD for its state, and this
+    test is about authorisation, not about a working player. Without the fake
+    the endpoint reports whatever the machine running the test happens to have
+    - 200 on a desktop with MPD installed, 503 on a CI runner without it - and
+    a test whose result depends on the host is a test that fails somewhere
+    unrelated.
+    """
     fake_runner.add_json("ytsearch", SEARCH_PAYLOAD)
     fake_runner.add_json("watch?v=", INFO_PAYLOAD)
     client = ExtractorClient(config, runner=fake_runner, executable="yt-dlp")
-    return ApiService(config, client=client, resolver=StreamResolver(config, client))
+    return ApiService(
+        config,
+        client=client,
+        resolver=StreamResolver(config, client),
+        mpd=FakeMpd(config),  # type: ignore[arg-type]
+    )
 
 
 class _StubHandler(ApiHandler):
@@ -389,3 +403,98 @@ class TestMpdStillReachesTheStream:
     def test_the_port_is_preserved(self, config: Config) -> None:
         bound = replace(config, host="192.0.2.20", port=9999, allow_lan=True, access_token="t")
         assert bound.stream_base_url == "http://127.0.0.1:9999"
+
+
+class TestDiagnostics:
+    """Whether a refused client leaves any trace.
+
+    "The phone cannot connect" has two very different causes: it never
+    arrived, or it arrived and was refused. Telling them apart needs the
+    journal, and until now a 401 was logged nowhere at all - so an operator
+    had nothing to look at and no way to tell which had happened.
+    """
+
+    def test_a_refusal_is_logged(
+        self, config: Config, fake_runner: FakeRunner, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        guarded = replace(config, allow_lan=True, access_token=TOKEN)
+        service = _build(guarded, fake_runner)
+        httpd = make_server(replace(guarded, port=0), service=service)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        # Simulate a network client, which is the only case that gets refused.
+        handler_service = service
+        try:
+            with caplog.at_level(logging.WARNING, logger="streambridge.api"):
+                status, payload = _get_with_peer(
+                    base, "/player/status", peer="192.0.2.77", handler_service=handler_service
+                )
+            assert status == 401
+            assert payload["code"] == "UNAUTHORIZED"
+            refused = [r for r in caplog.records if "no valid access token" in r.getMessage()]
+            assert refused, "a 401 left nothing in the journal"
+            # The message names the request but never the client's address.
+            assert "192.0.2.77" not in refused[0].getMessage()
+            assert "/player/status" in refused[0].getMessage()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_a_refusal_carries_no_token_into_the_log(
+        self, config: Config, fake_runner: FakeRunner, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        guarded = replace(config, allow_lan=True, access_token=TOKEN)
+        service = _build(guarded, fake_runner)
+        httpd = make_server(replace(guarded, port=0), service=service)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        try:
+            with caplog.at_level(logging.WARNING, logger="streambridge.api"):
+                _get_with_peer(
+                    base,
+                    "/queue",
+                    peer="192.0.2.77",
+                    handler_service=service,
+                    token="super-secret-token-value",
+                )
+            joined = "\n".join(r.getMessage() for r in caplog.records)
+            assert "super-secret-token-value" not in joined
+            assert TOKEN not in joined
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+
+def _get_with_peer(
+    url: str, path: str, *, peer: str, handler_service: Any, token: str | None = None
+) -> tuple[int, Any]:
+    """A GET whose *server-side* view of the peer is forced to *peer*.
+
+    A loopback socket cannot produce a non-loopback peer, and the peer address
+    is the whole decision. Rather than bind a real interface, the handler is
+    taught to believe it is talking to the network - which is exactly the
+    condition under test.
+    """
+    import json as _json
+    import urllib.request
+
+    original = ApiHandler._peer_is_loopback
+    ApiHandler._peer_is_loopback = lambda self: False  # type: ignore[method-assign]
+    try:
+        request = urllib.request.Request(url + path, headers={"Accept": "application/json"})
+        if token:
+            request.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, _json.loads(response.read() or b"{}")
+    except urllib.error.HTTPError as exc:
+        return exc.code, _json.loads(exc.read() or b"{}")
+    finally:
+        ApiHandler._peer_is_loopback = original  # type: ignore[method-assign]

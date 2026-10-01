@@ -48,7 +48,7 @@ from .errors import (
     ValidationError,
 )
 from .library import LibraryStore
-from .logging import redact, redact_url
+from .logging import redact
 from .models import SearchType, StreamInfo, Track, validate_playlist_id, validate_video_id
 from .mpd import MpdClient
 from .player import PlayerService
@@ -194,6 +194,25 @@ def _error_code(exc: StreamBridgeError) -> str:
         if isinstance(exc, kind):
             return code
     return "INTERNAL_ERROR"
+
+
+def _loggable_path(raw: str) -> str:
+    """The request path, without its query string.
+
+    The path is the part that says *what* was refused and is worth keeping, but
+    a query string is attacker-controlled and may carry anything at all, so it
+    is dropped rather than redacted. What is left still goes through
+    :func:`redact`, because a path can contain an address or an email.
+    """
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(raw)
+    except ValueError:  # pragma: no cover - urlsplit is very permissive
+        return "<unparsable path>"
+    if parts.query:
+        return f"{redact(parts.path)}?…"
+    return redact(parts.path)
 
 
 def _first(params: dict[str, list[str]], key: str) -> str | None:
@@ -614,7 +633,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         log.warning(
             "Refused %s %s from a network client: no valid access token",
             self.command,
-            redact_url(self.path),
+            _loggable_path(self.path),
         )
         raise AuthorizationError(
             "This server requires an access token.",
@@ -740,19 +759,32 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    @staticmethod
+    def _status_for(exc: StreamBridgeError) -> HTTPStatus:
+        """The HTTP status for a typed error.
+
+        A method rather than an inline dict so the mapping can be pinned by a
+        test. A missing mpc belongs to SERVICE_UNAVAILABLE, not to 500: it is
+        the service unable to do its job because a dependency is absent, the
+        same condition as MPD being down. Reporting 500 sends a reader hunting
+        for a fault in this server when the answer is `apt install mpd-client`.
+        """
+        return {
+            ValidationError: HTTPStatus.BAD_REQUEST,
+            AuthorizationError: HTTPStatus.UNAUTHORIZED,
+            RateLimitError: HTTPStatus.TOO_MANY_REQUESTS,
+            SourceUnavailableError: HTTPStatus.BAD_GATEWAY,
+            MpdError: HTTPStatus.SERVICE_UNAVAILABLE,
+            DependencyError: HTTPStatus.SERVICE_UNAVAILABLE,
+        }.get(type(exc), HTTPStatus.INTERNAL_SERVER_ERROR)
+
     def _error(self, exc: StreamBridgeError) -> None:
         """Map a typed error onto a status code and a JSON body.
 
         The body carries the message and optional hint but never a traceback
         or an internal path.
         """
-        status = {
-            ValidationError: HTTPStatus.BAD_REQUEST,
-            AuthorizationError: HTTPStatus.UNAUTHORIZED,
-            RateLimitError: HTTPStatus.TOO_MANY_REQUESTS,
-            SourceUnavailableError: HTTPStatus.BAD_GATEWAY,
-            MpdError: HTTPStatus.SERVICE_UNAVAILABLE,
-        }.get(type(exc), HTTPStatus.INTERNAL_SERVER_ERROR)
+        status = self._status_for(exc)
         payload: dict[str, Any] = {
             "code": _error_code(exc),
             "error": type(exc).__name__,
@@ -1380,10 +1412,21 @@ class _LocalServer(ThreadingHTTPServer):
                 self.sse_clients -= 1
 
 
-def make_server(config: Config, *, service: ApiService | None = None) -> ThreadingHTTPServer:
+def make_server(
+    config: Config,
+    *,
+    service: ApiService | None = None,
+    log_access: bool = False,
+) -> ThreadingHTTPServer:
     """Create a threaded HTTP server on the configured address.
 
-    Loopback is the default and stays unrestricted. Serving a network address
+    Loopback is the default and stays unrestricted.
+
+    ``log_access`` turns on per-request logging with the (redacted) peer
+    address. The caller decides, because the caller is what knows the log
+    level; inferring it here from the logger's state would work only if
+    logging happened to be configured first, which is a fragile thing to rely
+    on. Serving a network address
     is an explicit opt-in (``server.allow_lan``) and additionally requires
     ``server.access_token``; the rule itself lives in
     :func:`streambridge.config.lan_bind_problem` so the CLI enforces the same
@@ -1393,7 +1436,15 @@ def make_server(config: Config, *, service: ApiService | None = None) -> Threadi
     if problem is not None:
         raise ValidationError(problem, hint="Set server.host to 127.0.0.1 for desktop-only use.")
     api = service or ApiService(config)
-    handler = type("BoundApiHandler", (ApiHandler,), {"service": api})
+    # Access logging is opt-in. On, each request is logged with its redacted
+    # peer, which is the only way to answer "did my phone even get through?".
+    # Off by default, because a client IP is exactly the kind of thing this
+    # project does not write down unless asked to.
+    handler = type(
+        "BoundApiHandler",
+        (ApiHandler,),
+        {"service": api, "quiet": not log_access},
+    )
     # A backlog is what the listen queue is set to. The default of 5 is small
     # enough that a burst of browser requests plus an SSE reconnect can be
     # refused outright, which surfaces as a failed asset load rather than a

@@ -25,6 +25,14 @@ import pytest
 from conftest import INFO_PAYLOAD, SEARCH_PAYLOAD, FakeMpd, FakeRunner
 from streambridge.api import ApiService, make_server
 from streambridge.config import Config
+from streambridge.errors import (
+    DependencyError,
+    MpdError,
+    RateLimitError,
+    SourceUnavailableError,
+    StreamBridgeError,
+    ValidationError,
+)
 from streambridge.resolver import StreamResolver
 from streambridge.youtube import ExtractorClient
 
@@ -268,6 +276,29 @@ class TestErrorContract:
         for path, (payload, code) in cases.items():
             _, body, _ = server.post(path, payload)
             assert body["code"] == code, (path, body)
+
+    @pytest.mark.parametrize(
+        ("error", "expected"),
+        [
+            # A missing mpc is the service being unable to do its job, not a
+            # bug in it. Reporting 500 sends a reader hunting for a fault in
+            # this server when the answer is `apt install mpd-client`. Found
+            # because a CI runner without mpc produced exactly that.
+            (DependencyError("mpc was not found."), 503),
+            (MpdError("MPD did not answer."), 503),
+            (SourceUnavailableError("upstream is down."), 502),
+            (RateLimitError("too many."), 429),
+            (ValidationError("bad input."), 400),
+        ],
+    )
+    def test_each_typed_error_maps_to_its_status(
+        self, error: StreamBridgeError, expected: int
+    ) -> None:
+        # Pinned as a table rather than exercised through a real missing
+        # dependency, so it holds on a machine that happens to have mpc.
+        from streambridge.api import ApiHandler
+
+        assert ApiHandler._status_for(error) == expected
 
     def test_not_found(self, server: ContractClient) -> None:
         status, body, _ = server.get("/no-such-path")
