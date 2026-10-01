@@ -12,7 +12,7 @@ so you can check it against [`src/`](../src).
 | Account required | **No.** |
 | Telemetry, analytics, crash reports | **None.** |
 | Data left on your machine | Favourites, play history, a search cache |
-| Network connections | The upstream music service, and `127.0.0.1` |
+| Network connections | The upstream music service, and your own server |
 
 ## What is stored on your machine
 
@@ -86,6 +86,53 @@ Cover images are a **redirect** to the upstream image host, not a proxy. The
 video id is validated before the URL is built, so the redirect cannot be steered
 elsewhere — and this is the one place your browser talks to the upstream host
 directly.
+
+## The Android app
+
+The [Android app](android.md) is the same promise with a different device
+behind it. There is no Play Services dependency, no Firebase, no advertising
+identifier, no crash reporter and no analytics SDK - the whole dependency list
+is Kotlin, AndroidX, OkHttp and Coil, and none of them phone home.
+
+**What is stored, all of it on the phone:**
+
+| | |
+| --- | --- |
+| Server address and port | in the app's private DataStore |
+| Access token, if you set one | same, and only if you type one |
+| Anything else | nothing |
+
+**What leaves the phone:** requests to the address you configured, and cover
+images. And the cover images are requested *from the server*, which redirects
+to the upstream image host - the phone does not contact the upstream host on
+its own initiative, which is a small thing that removes a whole category of
+"what does this app talk to on its own".
+
+**Permissions:**
+
+| Permission | Why |
+| --- | --- |
+| `INTERNET` | reach the server |
+| `ACCESS_NETWORK_STATE` | notice that Wi-Fi came back and reconnect by itself |
+| `POST_NOTIFICATIONS` (Android 13+) | the media notification with the lock-screen controls |
+
+Three normal permissions, no location, no Bluetooth, no camera, no
+`READ_PHONE_STATE`, no account, no push, and no foreground-service permission -
+because nothing is decoded on the phone. Declining the notification costs the
+lock-screen remote and nothing else.
+
+**Backups are off.** The manifest excludes the whole app from both cloud backup
+and device transfer. An address is specific to one network and a token is a
+credential; neither is worth carrying to another phone.
+
+**YouTube accounts stay here.** The app has no account field and asks for no
+credentials. Where `yt-dlp` needs a logged-in session, that configuration lives
+on the server, in a browser profile this app never sees.
+
+**There is no discovery.** The app does not broadcast, does not answer mDNS
+queries and does not scan the network. It talks to one address you typed. That
+is why it needs no permission to do it, and it is why there is nothing on the
+network for it to be redirected by.
 
 ## Verifying this page
 

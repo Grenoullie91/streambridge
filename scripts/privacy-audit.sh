@@ -47,9 +47,18 @@ ALLOW_USER='/(home|Users)/(USER|user|someone|u)/'
 # RFC 2606 / 5737 reserved names, and the example domains in test fixtures.
 ALLOW_EMAIL='@(example|test|invalid|localhost|not-a-real)'
 # Loopback plus the RFC 5737 documentation ranges.
-ALLOW_IP='\b(127\.|0\.0\.0\.0|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|169\.254\.169\.254|10\.0\.0\.5|192\.168\.1\.50)'
+# 10.0.2.2 is the Android emulator's alias for the host machine, and 10.0.0.9
+# is a client address a test needs to be non-loopback. Neither is a machine.
+ALLOW_IP='\b(127\.|0\.0\.0\.0|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|169\.254\.169\.254|10\.0\.0\.5|192\.168\.1\.50|10\.0\.2\.2|10\.0\.0\.9|999\.999\.999\.999)'
 # The link-local cloud metadata address, which appears only as an SSRF target.
 ALLOW_UUID='123e4567-e89b-12d3-a456-426614174000'
+# A credential a test has to name in order to prove that a wrong one is
+# refused. Obvious by construction, and asserted to be refused in the test.
+ALLOW_CREDENTIAL='\b(s3cret|fake|dummy|example|test|not-the|wrong)[a-z0-9-]*["'"'"']?'
+# Two things that read like private hostnames and are not. A library package
+# name is not a machine, and a hostname a test asserts is *rejected* has to be
+# written out in full to be a test.
+ALLOW_HOSTNAME='(okhttp3\.internal|nas-\.lan)'
 
 # This script is excluded from the scan: it necessarily contains every
 # pattern it searches for.
@@ -182,10 +191,13 @@ scan "UUID" \
 scan "private key block" \
   'BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY'
 
+# A quoted literal only. An unquoted 16+ character run after `token =` is far
+# more often a function name (stringPreferencesKey, tokenizeRequest) than a
+# secret, and a check that cries wolf gets stopped being read.
 scan "credential assignment" \
-  '(api[_-]?key|secret|token|password|passwd|bearer)[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9/+_-]{16,}' \
+  '(api[_-]?key|secret|token|password|passwd|bearer)[[:space:]]*[:=][[:space:]]*["'"'"'][A-Za-z0-9/+_-]{16,}["'"'"']' \
   "A literal credential. Reference an environment variable instead." \
-  "" \
+  "$ALLOW_CREDENTIAL" \
   "yes"
 
 scan "GitHub token" \
@@ -204,7 +216,9 @@ scan "cookie or credential file" \
 # Deliberately narrow. A broader rule for .local or .home matches ordinary
 # code such as config.local.toml and Path.home(), which is not a leak.
 scan "private hostname" \
-  '\b[a-zA-Z0-9][a-zA-Z0-9-]*\.(lan|internal|corp|intranet)\b'
+  '\b[a-zA-Z0-9][a-zA-Z0-9-]*\.(lan|internal|corp|intranet)\b' \
+  "Looks like a machine name on a private network." \
+  "$ALLOW_HOSTNAME"
 
 # /usr and /etc are universal and safe to name. These are the locations that
 # are specific to one machine. Quoted or bare: an ini ExecStart line and a

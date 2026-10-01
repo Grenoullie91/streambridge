@@ -17,7 +17,7 @@ from types import FrameType
 
 from . import __version__
 from .api import ApiService, make_server
-from .config import Config, load_config
+from .config import Config, is_lan_bind, lan_bind_problem, load_config
 from .errors import ConfigError, DependencyError, StreamBridgeError
 from .health import build_report
 from .logging import log_level_from_env, setup_logging
@@ -41,8 +41,20 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--version", action="version", version=f"streambridge {__version__}")
-    parser.add_argument("--host", help="Bind address (loopback only)")
+    parser.add_argument("--host", help="Bind address (loopback only unless --allow-lan)")
     parser.add_argument("--port", type=int, help="Port (default 8787)")
+    parser.add_argument(
+        "--allow-lan",
+        action="store_true",
+        help=(
+            "Serve the local network so the Android app can connect. "
+            "Requires --access-token; loopback-only is the default."
+        ),
+    )
+    parser.add_argument(
+        "--access-token",
+        help="Shared secret required from clients that are not on this machine",
+    )
     parser.add_argument("--config", help="Path to config.toml")
     parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     parser.add_argument(
@@ -77,6 +89,10 @@ def _load(args: argparse.Namespace) -> Config:
         overrides["host"] = args.host
     if args.port:
         overrides["port"] = args.port
+    if args.allow_lan:
+        overrides["allow_lan"] = True
+    if args.access_token:
+        overrides["access_token"] = args.access_token
     if args.cookies_from_browser:
         overrides["cookies_from_browser"] = args.cookies_from_browser
     if args.extractor_path:
@@ -113,11 +129,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         return check_dependencies(config)
 
-    if config.host not in ("127.0.0.1", "::1", "localhost"):
-        print(
-            f"Error: streambridge-server binds to loopback only, not {config.host!r}.",
-            file=sys.stderr,
-        )
+    # The bind policy lives in one place so the CLI and the server factory
+    # cannot drift apart. With the default configuration this is the historic
+    # "loopback only" refusal, unchanged.
+    problem = lan_bind_problem(config)
+    if problem is not None:
+        print(f"Error: {problem}", file=sys.stderr)
         return EXIT_INVALID_INPUT
 
     client = ExtractorClient(config)
@@ -163,6 +180,10 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, shutdown)
 
     log.info("listening on http://%s:%d", config.host, config.port)
+    if is_lan_bind(config):
+        # Worth a line in the journal: a network bind is the one configuration
+        # change that puts the player outside this machine.
+        log.info("LAN access is enabled: clients from other machines must send the access token.")
     log.info("extractor: %s", service.extractor_version() or "not found")
     log.info("cache: %s", config.cache_directory)
     if config.cookies_from_browser:

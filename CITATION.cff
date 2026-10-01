@@ -16,8 +16,8 @@ abstract: >-
 type: software
 version: 0.1.0
 license: MIT
-repository-code: "https://github.com/OWNER/streambridge"
-url: "https://github.com/OWNER/streambridge"
+repository-code: "https://github.com/Grenoullie91/streambridge"
+url: "https://github.com/Grenoullie91/streambridge"
 keywords:
   - music
   - mpd
@@ -26,4 +26,4 @@ keywords:
   - privacy
 authors:
   - name: "StreamBridge contributors"
-    website: "https://github.com/OWNER/streambridge/graphs/contributors"
+    website: "https://github.com/Grenoullie91/streambridge/graphs/contributors"

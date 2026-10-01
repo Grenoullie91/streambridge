@@ -3,7 +3,7 @@
 ## Setup
 
 ```bash
-git clone https://github.com/OWNER/streambridge
+git clone https://github.com/Grenoullie91/streambridge
 cd streambridge
 pip install -e ".[dev]"
 ```

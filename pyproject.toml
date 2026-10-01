@@ -34,15 +34,22 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.11",
 ]
+# Only for scripts/make-android-icons.py, which renders the brand mark into
+# the Android launcher and browser icons. Declared here rather than left as an
+# undocumented import: the runtime stays dependency-free, and a build script
+# that needs a library says so instead of failing with a bare ImportError.
+android = [
+  "pillow>=10.0",
+]
 
 [project.scripts]
 streambridge = "streambridge.cli:main"
 streambridge-server = "streambridge.server:main"
 
 [project.urls]
-Documentation = "https://github.com/OWNER/streambridge/blob/main/README.md"
-Issues = "https://github.com/OWNER/streambridge/issues"
-Source = "https://github.com/OWNER/streambridge"
+Documentation = "https://github.com/Grenoullie91/streambridge/blob/main/README.md"
+Issues = "https://github.com/Grenoullie91/streambridge/issues"
+Source = "https://github.com/Grenoullie91/streambridge"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/streambridge"]

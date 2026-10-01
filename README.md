@@ -10,10 +10,17 @@ expire mid-track.
 ```
                         +-- browser UI      :8787
 search  ->  streambridge-server  ->  MPD  ->  mpc  ->  ncmpcpp  ->  speakers
-  CLI           loopback only         queue             terminal UI
+  CLI           loopback by default    queue             terminal UI
+                    |         |
+                    |         +-- Android app: same API, same queue, same player
                     |
                     +-- yt-dlp: resolves a track to a current audio source
 ```
+
+The Android app ([docs/android.md](docs/android.md)) is a client like any other.
+It does not run `yt-dlp` and does not start a second MPD: audio is decoded on
+this machine, and the phone is a remote control in front of the same server the
+browser talks to.
 
 ## The web interface
 
@@ -53,9 +60,11 @@ $ streambridge favorite 5NV6Rdv1a3I
 
 - **No Python dependencies.** The HTTP server, TOML config and CLI are standard
   library only. `yt-dlp` and MPD do the heavy lifting, and you already run MPD.
-- **Loopback only.** The server refuses to bind anything but `127.0.0.1`. It is
-  not a proxy: no endpoint accepts a URL, and every path segment is a
-  validated 11-character video id.
+- **Loopback by default; a token if you open it up.** The server refuses to
+  bind a network address unless you both set `server.allow_lan` and supply
+  `server.access_token`, so putting it on the network is always a deliberate
+  two-key act. It is still not a proxy: no endpoint accepts a URL, and every
+  path segment is a validated 11-character video id.
 - **Nothing identifying in the logs.** Home paths collapse to `$HOME`; emails,
   IPv4 addresses, UUIDs and signed media parameters are redacted.
 - **Nothing expires in a database.** Stream URLs are cached for two minutes,
@@ -175,6 +184,11 @@ commented file and [docs/configuration.md](docs/configuration.md) for details.
 ```toml
 [server]
 port = 8787
+# To reach the server from a phone, see docs/android.md. Both keys are
+# required together, and neither has a default:
+# host = "192.0.2.20"
+# allow_lan = true
+# access_token = "…"
 
 [mpd]
 host = "127.0.0.1"
@@ -202,23 +216,56 @@ attention: `ReadWritePaths` must include MPD's `playlist_directory`, because
 MPD only accepts a playlist load from that directory. If queuing fails with
 "Access denied", this is the reason.
 
+## The Android app
+
+A native Android client, built from `android/` with the same repository:
+
+```console
+$ ./scripts/build-android.sh
+```
+
+- `android/dist/app-release.apk` - signed, minified, ~1,9 MB
+- `android/dist/app-debug.apk` - unminified, ~18 MB
+
+Home, search, full player, queue, favourites, lock-screen control, and an
+offline state that says what to check. It connects to the same server as the
+browser and drives the same MPD, so a track queued on the phone shows up at
+the desktop and the other way round.
+
+Serving the network is opt-in and needs a token; the details, the firewall
+rule and the setup walkthrough are in [docs/android.md](docs/android.md).
+
 ## HTTP API
 
-Read-only, loopback-only, no endpoint takes a URL:
+No endpoint takes a URL, and none is reachable from off the machine unless
+`server.access_token` is set.
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /` | service banner and endpoint list |
-| `GET /health` | liveness and resolved versions |
-| `GET /search?q=&type=&limit=` | search |
-| `GET /info/<id>` | metadata for one track |
-| `GET /playlist?id=&limit=` | playlist metadata |
-| `GET /stream/<id>` | audio stream: 302 redirect, or a proxied relay |
-| `GET /stats` | cache statistics |
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/` | GET | web interface, or the service banner for API clients |
+| `/health`, `/version` | GET | liveness and resolved versions |
+| `/search?q=&type=&limit=` | GET | search |
+| `/info/<id>` | GET | metadata for one track |
+| `/playlist?id=&limit=` | GET | playlist metadata |
+| `/stream/<id>` | GET | audio stream: 302 redirect, or a proxied relay |
+| `/thumbnail/<id>` | GET | redirect to the cover image |
+| `/stats` | GET | cache statistics |
+| `/player/status` | GET | player state and the current song |
+| `/queue` | GET | the MPD queue |
+| `/queue/add`, `/queue/remove`, `/queue/move`, `/queue/clear` | POST | queue editing |
+| `/player/play`, `/pause`, `/stop`, `/next`, `/previous`, `/seek`, `/volume`, `/mute`, `/modes` | POST | transport |
+| `/favorites`, `/favorites/add`, `/remove`, `/toggle`, `/clear` | GET/POST | the local library |
+| `/history`, `/history/clear` | GET/POST | what has been played |
+| `/events` | GET | server-sent player state |
 
 `/stream/<id>` prefers a 302 so the player fetches the bytes itself and the
 bridge stays out of the data path. It only proxies when the source needs a
 header the player cannot be handed safely.
+
+`/health` and `/version` stay open even when a token is required, which is
+what lets a client tell "nothing is listening here" apart from "listening, but
+you are not allowed yet". Everything that can read the queue or move the
+needle needs the token.
 
 ## Troubleshooting
 
@@ -231,6 +278,9 @@ Start with `streambridge doctor` and `journalctl --user -u streambridge -f`.
 | "Sign in to confirm you're not a bot" | Upstream is challenging the client. Set `youtube.cookies_from_browser`. |
 | Stream stops after a few minutes | MPD re-requested a dead URL. The bridge re-resolves automatically; check the log. |
 | Title shows as a bare URL | MPD got no metadata. Confirm the playlist load succeeded. |
+| App says "Zugriffstoken fehlt" | The server has `access_token` set. Enter it under Settings. |
+| App says "Server nicht erreichbar" | Wrong address, or the server is still loopback-only. `ip -4 addr show scope global` for the address, then `server.allow_lan` + `server.access_token`. |
+| App connects but nothing plays | The phone is fine; MPD is not. Check `ncmpcpp` or `mpc status` - if those are stuck too, the problem is downstream of the app. |
 
 Full reference: [docs/troubleshooting.md](docs/troubleshooting.md).
 
@@ -243,12 +293,14 @@ Full reference: [docs/troubleshooting.md](docs/troubleshooting.md).
 - [docs/mpd.md](docs/mpd.md) — how StreamBridge drives MPD
 - [docs/mpd-config.md](docs/mpd-config.md) — getting MPD itself running
 - [docs/ncmpcpp.md](docs/ncmpcpp.md) — terminal player setup
+- [docs/android.md](docs/android.md) — the Android app: build, install, set up
 - [docs/troubleshooting.md](docs/troubleshooting.md) — symptom reference
 
 **Understanding it**
 
 - [docs/architecture.md](docs/architecture.md) — how the layers fit together
 - [docs/privacy.md](docs/privacy.md) — what is stored, what leaves the machine
+- [docs/privacy.md](docs/privacy.md#the-android-app) — what the phone stores, and what it never asks for
 - [SECURITY.md](SECURITY.md) — threat model, and how to report a problem
 - [docs/security.md](docs/security.md) — the security properties in detail
 - [docs/verification.md](docs/verification.md) — how the tests check behaviour

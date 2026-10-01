@@ -96,3 +96,13 @@ class NotFoundError(StreamBridgeError):
     """A requested resource does not exist."""
 
     exit_code = ExitCode.NOT_FOUND
+
+
+class AuthorizationError(StreamBridgeError):
+    """A request from the network arrived without a valid access token.
+
+    Only raised once LAN access is enabled (``server.allow_lan`` plus
+    ``server.access_token``); a loopback install never produces it.
+    """
+
+    exit_code = ExitCode.INVALID_INPUT

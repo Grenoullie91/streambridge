@@ -7,7 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+**Android app** — a native client for the phone, in `android/`. Kotlin and
+Jetpack Compose, no dependency-injection framework, and no second player: it
+drives the same server and therefore the same MPD as the browser and ncmpcpp.
+
+- Home, Search, Player, Queue and Favourites, plus a Settings screen and an
+  offline state that names the four things that are actually wrong.
+- Search through the server, so the phone never talks to the upstream
+  catalogue and holds no account, cookie or token of any kind.
+- Lock-screen, notification-shade and headset transport control through a
+  media session. Forwarded to the server exactly as the on-screen button is.
+- Server address, port and optional token stored on the device in DataStore;
+  nothing is backed up and nothing leaves the handset.
+- Adaptive launcher icon, themed-icon and status-bar layers, all generated
+  from the brand artwork by `scripts/make-android-icons.py`.
+- `scripts/build-android.sh` builds debug and a signed release APK, and
+  generates the signing key outside the repository on first use.
+- 90 JVM unit tests, plus two opt-in suites that run the real HTTP client
+  against a running server - including one that starts playback and pulls
+  bytes off the stream endpoint.
+
+**Optional LAN access** — so a phone on the same network can reach the server.
+
+- `server.allow_lan` and `server.access_token`. Both are required together:
+  the server refuses to start on a network address without a token, so
+  network access cannot be switched on by accident.
+- The token is compared in constant time, and only for clients that are not on
+  this machine - a browser on `127.0.0.1` keeps working with no token.
+- `/health` and `/version` stay reachable without one, so a client can tell
+  "nothing is listening" from "listening, but not for you".
+- The web interface asks for the token in a small dialog and remembers it, so
+  it also works from a browser on the network.
+- Documented in `docs/security.md`, with the firewall rule, in
+  `docs/android.md`.
+
+### Changed
+
+- The launcher icon, the status-bar icon and the browser favicon are now
+  generated from one source image, so the Android app and the web interface
+  cannot drift apart. Same URLs, same content types, new artwork.
+- `STREAMBRIDGE_ALLOW_LAN` accepts `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`
+  from the environment. It previously required a real boolean, which no
+  environment variable can be, so the documented way to enable LAN access from
+  a systemd unit did not work.
+
+### Fixed
+
+- A response that stalled partway through was reported as a raw socket
+  exception instead of a typed timeout, because the body was read outside the
+  try block. The app could only say "something went wrong" for it.
+- A malformed track id is now refused in the client before a path is built
+  from it. OkHttp resolves `..` segments while canonicalising a URL, so an
+  unchecked id could send a request to a different endpoint on the same
+  server.
+- The search results header was drawn underneath the first result rather than
+  above it.
 
 ## [0.1.0] - Unreleased
 
@@ -90,5 +146,5 @@ differentiate from.
 - Cookies are passed to the extractor as a browser name and never read by
   StreamBridge; see `youtube.cookies_from_browser` in the example config.
 
-[Unreleased]: https://github.com/OWNER/streambridge/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/OWNER/streambdae/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Grenoullie91/streambridge/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Grenoullie91/streambridge/releases/tag/v0.1.0

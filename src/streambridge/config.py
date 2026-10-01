@@ -12,6 +12,7 @@ Only the standard library (``tomllib``, Python 3.11+) is used.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import tomllib
 from collections.abc import Mapping
@@ -21,7 +22,32 @@ from typing import Any
 
 from .errors import ConfigError
 
+# Names accepted as "this machine". Kept for callers that only need the
+# literal comparison; use is_loopback_host() for anything that may be an
+# address literal such as 127.0.0.2 or ::1.
+LOOPBACK_HOSTS = ("127.0.0.1", "::1", "localhost")
+
+
+def is_loopback_host(host: str) -> bool:
+    """True when *host* can only ever be reached from this machine.
+
+    Hostnames are accepted for the two loopback spellings people actually
+    type. Everything else has to parse as an IP address in a loopback range,
+    which keeps 127.0.0.2 and ::1 in the trusted set without trusting
+    arbitrary names that DNS could point anywhere.
+    """
+    candidate = (host or "").strip().lower()
+    if candidate in LOOPBACK_HOSTS:
+        return True
+    try:
+        return ipaddress.ip_address(candidate).is_loopback
+    except ValueError:
+        return False
+
+
 DEFAULT_HOST = "127.0.0.1"
+# The address MPD is told to use, regardless of what the server listens on.
+LOCALHOST = "127.0.0.1"
 DEFAULT_PORT = 8787
 DEFAULT_MPD_HOST = "127.0.0.1"
 DEFAULT_MPD_PORT = 6600
@@ -95,6 +121,13 @@ class Config:
     # [server]
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
+    # Opt-in LAN access for the companion mobile app. False keeps the historic
+    # posture: loopback only, unreachable from the network.
+    allow_lan: bool = False
+    # Shared secret required from non-loopback clients when allow_lan is set.
+    # Loopback clients stay exempt so the browser UI on this machine keeps
+    # working with no token at all.
+    access_token: str | None = None
     # [search]
     search_limit: int = DEFAULT_SEARCH_LIMIT
     search_rate_per_min: int = DEFAULT_SEARCH_RATE_PER_MIN
@@ -129,7 +162,28 @@ class Config:
 
     @property
     def base_url(self) -> str:
+        """The URL a client on this machine uses to reach the server."""
         return f"http://{self.host}:{self.port}"
+
+    @property
+    def stream_base_url(self) -> str:
+        """The base URL written into the MPD queue, which is not always the
+        address the server listens on.
+
+        MPD fetches the audio itself, and it runs here, on this machine. So
+        when the listening socket is a network address - because
+        ``server.allow_lan`` is on so a phone can connect - the URL handed to
+        MPD still points at loopback.
+
+        Getting this wrong is silent and fatal: a queue entry holding the
+        network address is fetched by MPD with no token attached, the server
+        answers 401, and playback stops with "Failed to decode" on a player
+        that is otherwise perfectly reachable. The token protects the network
+        face; MPD must not be routed through it.
+        """
+        if is_loopback_host(self.host):
+            return self.base_url
+        return f"http://{LOCALHOST}:{self.port}"
 
     @property
     def web_enabled(self) -> bool:
@@ -138,7 +192,7 @@ class Config:
         return directory is not None and (Path(directory) / "index.html").is_file()
 
     def stream_url(self, video_id: str) -> str:
-        return f"{self.base_url}/stream/{video_id}"
+        return f"{self.stream_base_url}/stream/{video_id}"
 
 
 def _as_int(value: Any, key: str) -> int:
@@ -170,12 +224,45 @@ def _as_path(value: Any, key: str) -> Path:
     return Path(_as_str(value, key)).expanduser()
 
 
+def _as_bool(value: Any, key: str) -> bool:
+    """A TOML boolean.
+
+    TOML gives a real bool, and a string where a bool belongs is a mistake
+    worth reporting rather than guessing at.
+    """
+    if not isinstance(value, bool):
+        raise ConfigError(f"{key} must be a boolean (true/false), got {value!r}")
+    return value
+
+
+def _as_env_bool(value: Any, key: str) -> bool:
+    """A boolean that arrived from the environment, where everything is text.
+
+    Strict on purpose: only the five spellings people actually type are
+    accepted, so `allow_lan=yes` fails with a message naming the variable
+    instead of silently reading as false and leaving the phone unable to
+    connect with no explanation anywhere.
+    """
+    if isinstance(value, bool):
+        return value
+    if not isinstance(value, str):
+        raise ConfigError(f"{key} must be a boolean (true/false), got {value!r}")
+    lowered = value.strip().lower()
+    if lowered in ("1", "true", "yes", "on"):
+        return True
+    if lowered in ("0", "false", "no", "off"):
+        return False
+    raise ConfigError(f"{key} must be one of true/false/1/0/yes/no/on/off, got {value!r}")
+
+
 # section -> key -> (coercer, Config field)
 _SCHEMA: dict[str, dict[str, Any]] = {
     "server": {
         "host": ("host", _as_str),
         "port": ("port", _as_int),
         "web_directory": ("web_directory", _as_path),
+        "allow_lan": ("allow_lan", _as_bool),
+        "access_token": ("access_token", _as_str),
     },
     "search": {
         "limit": ("search_limit", _as_int),
@@ -245,6 +332,40 @@ def config_from_mapping(data: Mapping[str, Any]) -> Config:
     return validate_config(replace(Config(), **overrides))
 
 
+def is_lan_bind(config: Config) -> bool:
+    """True when *config* asks for a bind address reachable from the network."""
+    return not is_loopback_host(config.host)
+
+
+def lan_bind_problem(config: Config) -> str | None:
+    """Describe why *config* may not be served, or None when it is fine.
+
+    Split out of the two call sites that need the same decision (the server
+    factory and the CLI) so the rule lives in one place:
+
+    * loopback is always allowed, exactly as before;
+    * a network address needs ``server.allow_lan``;
+    * a network address additionally needs a token, so enabling LAN access
+      can never silently publish an unauthenticated player on the network.
+    """
+    if not is_lan_bind(config):
+        return None
+    if not config.allow_lan:
+        return (
+            f"streambridge-server listens on loopback only, not {config.host!r}.\n"
+            "  Set server.allow_lan = true to serve the local network (for example for the\n"
+            "  Android app), and set server.access_token to a shared secret at the same time."
+        )
+    if not config.access_token:
+        return (
+            f"Refusing to serve {config.host!r} without server.access_token.\n"
+            "  LAN access requires a shared secret: anyone who can reach this port could\n"
+            "  otherwise control the player. Generate one with:\n"
+            "    python3 -c 'import secrets; print(secrets.token_urlsafe(24))'"
+        )
+    return None
+
+
 def validate_config(config: Config) -> Config:
     """Enforce invariants regardless of where a value originated."""
     if not 1 <= config.port <= 65535:
@@ -302,6 +423,8 @@ _ENV_MAP: dict[str, tuple[str, Any, str]] = {
     "STREAMBRIDGE_CACHE_TTL": ("cache_ttl_seconds", _as_float, "cache.ttl_seconds"),
     "STREAMBRIDGE_STATE_DIR": ("state_directory", _as_path, "library.directory"),
     "STREAMBRIDGE_WEB_DIR": ("web_directory", _as_path, "server.web_directory"),
+    "STREAMBRIDGE_ALLOW_LAN": ("allow_lan", _as_env_bool, "server.allow_lan"),
+    "STREAMBRIDGE_ACCESS_TOKEN": ("access_token", _as_str, "server.access_token"),
     "STREAMBRIDGE_DEFAULT_VOLUME": ("default_volume", _as_int, "player.default_volume"),
     "STREAMBRIDGE_MPD_HOST": ("mpd_host", _as_str, "mpd.host"),
     "STREAMBRIDGE_MPD_PORT": ("mpd_port", _as_int, "mpd.port"),

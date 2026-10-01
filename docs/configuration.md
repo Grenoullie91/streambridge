@@ -37,7 +37,9 @@ that never took effect.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `host` | `127.0.0.1` | Bind address. Loopback only; anything else is refused at startup. |
+| `host` | `127.0.0.1` | Bind address. Loopback unless both `allow_lan` and `access_token` are set. |
+| `allow_lan` | `false` | Permit a network bind, so a phone can reach the server. Requires `access_token`. |
+| `access_token` | none | Shared secret required from clients that are not on this machine. Loopback clients are exempt. |
 | `port` | `8787` | 1..65535 |
 
 ### `[search]`
@@ -127,6 +129,8 @@ Logs go to stderr and pass through a redacting filter. Use `-v` for `DEBUG`.
 |---|---|
 | `STREAMBRIDGE_CONFIG` | Path to the config file |
 | `STREAMBRIDGE_HOST` | `server.host` |
+| `STREAMBRIDGE_ALLOW_LAN` | `server.allow_lan` (`true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`) |
+| `STREAMBRIDGE_ACCESS_TOKEN` | `server.access_token` |
 | `STREAMBRIDGE_PORT` | `server.port` |
 | `STREAMBRIDGE_SEARCH_LIMIT` | `search.limit` |
 | `STREAMBRIDGE_REQUEST_TIMEOUT` | `timeouts.request` |

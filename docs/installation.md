@@ -78,7 +78,7 @@ pipx install streambridge
 From a checkout, for development:
 
 ```bash
-git clone https://github.com/OWNER/streambridge
+git clone https://github.com/Grenoullie91/streambridge
 cd streambridge
 pip install -e ".[dev]"
 ```

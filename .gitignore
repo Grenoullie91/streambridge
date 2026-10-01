@@ -38,3 +38,13 @@ secrets.*
 *.key
 *.p12
 *.keystore
+
+# The Android client lives in its own repository.
+#
+# It is a separate application with its own build system, its own release
+# cycle and its own dependency set, and keeping a second Gradle project in
+# this tree would make the first clone of a Python tool 175 MB. The build
+# script and docs/android.md stay here and check the client out where they
+# need it.
+# See docs/android.md.
+/android/

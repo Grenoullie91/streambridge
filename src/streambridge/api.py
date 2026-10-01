@@ -17,6 +17,7 @@ video ids, which is what keeps this from becoming a general-purpose proxy.
 from __future__ import annotations
 
 import contextlib
+import hmac
 import json
 import logging
 import re
@@ -34,8 +35,9 @@ from typing import Any
 
 from . import __version__
 from .cache import DiskSearchCache, TtlCache, info_cache_key, search_cache_key, track_from_dict
-from .config import Config
+from .config import Config, lan_bind_problem
 from .errors import (
+    AuthorizationError,
     ConfigError,
     DependencyError,
     MpdError,
@@ -108,6 +110,11 @@ _STATIC_FILES: dict[str, tuple[str, str]] = {
     "/assets/logo.svg": ("assets/logo.svg", "image/svg+xml"),
     "/assets/icon-192.svg": ("assets/icon-192.svg", "image/svg+xml"),
     "/assets/icon-512.svg": ("assets/icon-512.svg", "image/svg+xml"),
+    "/assets/favicon-16.png": ("assets/favicon-16.png", "image/png"),
+    "/assets/favicon-32.png": ("assets/favicon-32.png", "image/png"),
+    "/assets/favicon-48.png": ("assets/favicon-48.png", "image/png"),
+    "/assets/favicon-96.png": ("assets/favicon-96.png", "image/png"),
+    "/assets/favicon-192.png": ("assets/favicon-192.png", "image/png"),
 }
 
 # Paths that only answer GET. A POST here gets 405 rather than 404 so the
@@ -171,6 +178,7 @@ MAX_BATCH_IDS = 200
 # for anything already relying on it.
 _ERROR_CODES: dict[type, str] = {
     ValidationError: "VALIDATION_ERROR",
+    AuthorizationError: "UNAUTHORIZED",
     NotFoundError: "NOT_FOUND",
     RateLimitError: "RATE_LIMITED",
     SourceUnavailableError: "UPSTREAM_ERROR",
@@ -513,6 +521,94 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.send_header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
         super().end_headers()
 
+    # -- authorisation --------------------------------------------------
+    #
+    # Only relevant once server.allow_lan is on. With no access_token
+    # configured every request is allowed, which is exactly the behaviour of
+    # a loopback-only install and keeps this a no-op for the default setup.
+
+    #: Paths that must answer without a token even for network clients.
+    #:
+    #: The static shell and the cover images, because that is all a client
+    #: needs in order to render the "this server needs a token" prompt; and
+    #: /health plus /version, which carry nothing but the service version and
+    #: let a client tell "wrong address" apart from "needs a token" before it
+    #: has one. Everything that can read the queue or move the needle is
+    #: protected.
+    _TOKEN_EXEMPT = frozenset({"/", "/index.html", "/health", "/version", "/app.css", "/app.js"})
+
+    def _token_exempt(self, path: str) -> bool:
+        if path in self._TOKEN_EXEMPT:
+            return True
+        return path.startswith("/assets/") or _THUMB_PATH_RE.match(path) is not None
+
+    def _presented_token(self) -> str | None:
+        """The token the client sent, or None.
+
+        Two spellings are accepted: the standard ``Authorization: Bearer``
+        and a plain header, because an Android client and a browser both
+        find one of them more convenient than writing the other.
+        """
+        authorization = (self.headers.get("Authorization") or "").strip()
+        if authorization:
+            scheme, _, value = authorization.partition(" ")
+            if scheme.lower() == "bearer":
+                candidate = value.strip()
+                if candidate:
+                    return candidate
+            else:
+                # A non-Bearer scheme is a malformed attempt, not a fallback.
+                return None
+        plain = (self.headers.get("X-Streambridge-Token") or "").strip()
+        return plain or None
+
+    def _peer_is_loopback(self) -> bool:
+        try:
+            return self.client_address[0].startswith("127.") or self.client_address[0] in (
+                "::1",
+                "localhost",
+            )
+        except (AttributeError, IndexError, TypeError):  # pragma: no cover - defensive
+            # A missing peer address is not a reason to hand out access.
+            return False
+
+    def _authorised(self, path: str) -> bool:
+        """Decide access for *path* before any work is done on the request.
+
+        Ordering matters: the token is only consulted at all when one is
+        configured, and only for clients that are not on this machine. That
+        is what keeps the browser UI on 127.0.0.1 working unchanged while the
+        same port serves the phone over the network.
+        """
+        expected = self.service.config.access_token
+        if not expected:
+            return True
+        if self._peer_is_loopback():
+            return True
+        if self._token_exempt(path):
+            return True
+        presented = self._presented_token()
+        if presented is None:
+            return False
+        # Constant-time: a token is a shared secret, and a length-oracle or
+        # early-exit comparison would leak it byte by byte over the network.
+        return hmac.compare_digest(presented.encode("utf-8"), expected.encode("utf-8"))
+
+    def _check_authorised(self, path: str) -> None:
+        """Refuse the request unless *path* is open to this client.
+
+        Raises :class:`AuthorizationError`, which the shared error path turns
+        into a 401. Called at the top of both do_GET and do_POST, before any
+        routing, so a token-less network client cannot reach state it should
+        not see even by guessing paths.
+        """
+        if self._authorised(path):
+            return
+        raise AuthorizationError(
+            "This server requires an access token.",
+            hint="Send it as 'Authorization: Bearer <token>'.",
+        )
+
     def _read_body(self) -> dict[str, Any]:
         """Parse a JSON request body, refusing oversized or malformed input.
 
@@ -630,6 +726,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         """
         status = {
             ValidationError: HTTPStatus.BAD_REQUEST,
+            AuthorizationError: HTTPStatus.UNAUTHORIZED,
             RateLimitError: HTTPStatus.TOO_MANY_REQUESTS,
             SourceUnavailableError: HTTPStatus.BAD_GATEWAY,
             MpdError: HTTPStatus.SERVICE_UNAVAILABLE,
@@ -651,6 +748,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/") or "/"
         params = urllib.parse.parse_qs(parsed.query)
         try:
+            self._check_authorised(path)
             if path == "/":
                 # A browser gets the UI, an API client the machine-readable
                 # banner. Both are documented; neither needs a flag.
@@ -757,6 +855,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         try:
+            self._check_authorised(path)
             if path not in _MUTATING_PATHS:
                 # A known GET-only path answers 405 so the client can tell
                 # "wrong method" from "wrong path" and read the Allow header.
@@ -1210,9 +1309,6 @@ class ApiHandler(BaseHTTPRequestHandler):
         log.debug("Streamed %s: %d bytes", info.video_id, written)
 
 
-LOOPBACK_HOSTS = ("127.0.0.1", "::1", "localhost")
-
-
 class _LocalServer(ThreadingHTTPServer):
     """Threaded server with a listen backlog and a cap on concurrent SSE feeds.
 
@@ -1263,16 +1359,17 @@ class _LocalServer(ThreadingHTTPServer):
 
 
 def make_server(config: Config, *, service: ApiService | None = None) -> ThreadingHTTPServer:
-    """Create a threaded HTTP server on the configured loopback address.
+    """Create a threaded HTTP server on the configured address.
 
-    Refusing any non-loopback bind address is the enforcement point for
-    "this is not a public proxy".
+    Loopback is the default and stays unrestricted. Serving a network address
+    is an explicit opt-in (``server.allow_lan``) and additionally requires
+    ``server.access_token``; the rule itself lives in
+    :func:`streambridge.config.lan_bind_problem` so the CLI enforces the same
+    thing before it gets here.
     """
-    if config.host not in LOOPBACK_HOSTS:
-        raise ValidationError(
-            f"streambridge-server listens on loopback only, not on {config.host!r}.",
-            hint="Set server.host to 127.0.0.1 in the configuration.",
-        )
+    problem = lan_bind_problem(config)
+    if problem is not None:
+        raise ValidationError(problem, hint="Set server.host to 127.0.0.1 for desktop-only use.")
     api = service or ApiService(config)
     handler = type("BoundApiHandler", (ApiHandler,), {"service": api})
     # A backlog is what the listen queue is set to. The default of 5 is small

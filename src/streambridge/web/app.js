@@ -127,9 +127,32 @@ class ApiError extends Error {
   }
 }
 
+/* Access token.
+ *
+ * Only relevant when the server runs with server.allow_lan, which is also the
+ * only configuration in which it can answer 401 at all. On a default
+ * loopback install TOKEN_KEY stays empty, nothing is sent, and no prompt can
+ * ever appear. Kept in localStorage so it survives a reload on this device
+ * and never leaves it.
+ */
+const TOKEN_KEY = 'streambridge.token';
+
+function readToken() {
+  try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
+}
+
+function writeToken(value) {
+  try {
+    if (value) localStorage.setItem(TOKEN_KEY, value);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch { /* private mode: the prompt simply asks again next reload */ }
+}
+
 const api = {
   async request(path, { method = 'GET', body } = {}) {
     const init = { method, headers: { Accept: 'application/json' } };
+    const token = readToken();
+    if (token) init.headers['Authorization'] = `Bearer ${token}`;
     if (body !== undefined) {
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
@@ -148,6 +171,18 @@ const api = {
     if (text) {
       try { payload = JSON.parse(text); } catch { payload = {}; }
     }
+    if (response.status === 401) {
+      // Ask once, centrally, rather than sprinkling prompts over the views.
+      const entered = await promptForToken();
+      if (entered === null) {
+        throw new ApiError('Dieser Server verlangt ein Zugriffstoken.', {
+          hint: 'In der Konfiguration von streambridge-server nachsehen.',
+          code: 'UNAUTHORIZED',
+          status: 401,
+        });
+      }
+      if (entered) return api.request(path, { method, body });
+    }
     if (!response.ok) {
       throw new ApiError(payload.message || `Anfrage fehlgeschlagen (HTTP ${response.status})`, {
         hint: payload.hint || '',
@@ -160,6 +195,44 @@ const api = {
   get(path) { return api.request(path); },
   post(path, body) { return api.request(path, { method: 'POST', body: body ?? {} }); },
 };
+
+/** Modal asking for the LAN access token. Resolves to the token, or null if cancelled. */
+function promptForToken() {
+  return new Promise((resolve) => {
+    if (document.getElementById('token-dialog')) { resolve(readToken() || null); return; }
+    const backdrop = el('div', { class: 'token-backdrop', id: 'token-dialog' });
+    const box = el('form', { class: 'token-box' });
+    const heading = el('h2', { class: 'token-title', textContent: 'Zugriffstoken' });
+    const blurb = el('p', {
+      class: 'token-blurb',
+      textContent: 'Dieser Server läuft mit Netzwerkzugriff und verlangt ein Token.',
+    });
+    const field = el('input', {
+      class: 'token-input', type: 'password', name: 'token',
+      placeholder: 'Zugriffstoken', autocomplete: 'off', required: 'required',
+    });
+    const error = el('p', { class: 'token-error' });
+    const actions = el('div', { class: 'token-actions' });
+    const cancel = el('button.btn', { type: 'button', text: 'Abbrechen' });
+    const submit = el('button.btn.btn--primary', { type: 'submit', text: 'Verbinden' });
+    actions.append(cancel, submit);
+    box.append(heading, blurb, field, error, actions);
+    backdrop.append(box);
+    document.body.append(backdrop);
+    field.focus();
+
+    const close = (value) => { backdrop.remove(); resolve(value); };
+    cancel.addEventListener('click', () => close(null));
+    backdrop.addEventListener('click', (event) => { if (event.target === backdrop) close(null); });
+    box.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const value = field.value.trim();
+      if (!value) { error.textContent = 'Bitte ein Token eingeben.'; return; }
+      writeToken(value);
+      close(value);
+    });
+  });
+}
 
 /* --- Application state -------------------------------------------------- */
 
