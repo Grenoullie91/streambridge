@@ -72,8 +72,40 @@ jobs:
           streambridge --version
           streambridge-server --version
           streambridge --help > /dev/null
-          # --check must not require a running MPD or a live network.
-          streambridge-server --check
+          # The web assets have to arrive inside the wheel. Without this the
+          # install succeeds and the interface is simply absent, which is the
+          # failure mode a package-data omission produces and the one a version
+          # print cannot see.
+          python -c "
+          import pathlib, sys
+          import streambridge.config as c
+          assert c.Config().web_enabled, 'web assets missing from the wheel'
+          print('web assets present:', c.Config().web_directory)
+          "
+          # --check reports the environment and exits non-zero when a
+          # *required* dependency is missing, so it is run with the two the
+          # runner actually has: a stub mpc on PATH and no MPD to talk to.
+          # Neither is a code path the wheel can be checked against, and a
+          # smoke test that fails for a missing apt package tests the runner.
+          #
+          # The stub has to work, not just exist: `which` finding the name is
+          # not what the check tests, a running mpc is. exit 0 makes it a
+          # present-and-answering stand-in.
+          mkdir -p "$RUNNER_TEMP/stub"
+          printf '#!/bin/sh\nexit 0\n' > "$RUNNER_TEMP/stub/mpc"
+          chmod +x "$RUNNER_TEMP/stub/mpc"
+          # yt-dlp has to report a version, so the stub answers --version.
+          cat > "$RUNNER_TEMP/stub/yt-dlp" <<'STUB'
+          #!/bin/sh
+          for arg in "$@"; do
+            case "$arg" in
+              --version) echo "2099.01.01"; exit 0 ;;
+            esac
+          done
+          echo "[]"
+          STUB
+          chmod +x "$RUNNER_TEMP/stub/yt-dlp"
+          PATH="$RUNNER_TEMP/stub:$PATH" streambridge-server --check
 
   # Optional: contacts the real upstream service. Never part of the default
   # gate, because it depends on that service being reachable and is
