@@ -30,10 +30,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install build tooling
+      - name: Install build tooling and the project
         run: |
           python -m pip install --upgrade pip
-          pip install build twine
+          # The verification gate below needs the dev extras: it runs pytest,
+          # ruff and mypy, not just the build. Installing the project editable
+          # with '.[dev]' is what makes that work; "pip install build twine"
+          # alone left the gate running with no pytest and failing for a
+          # reason that has nothing to do with the code.
+          pip install -e '.[dev]' build twine
 
       - name: Verify before publishing
         # A release is the one moment a mistake becomes permanent and public.
