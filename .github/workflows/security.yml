@@ -23,13 +23,13 @@ jobs:
     name: Dependency and static security audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The history is what the privacy audit reads. A shallow clone would
           # hide exactly the leaks this is meant to catch.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -48,7 +48,7 @@ jobs:
     name: Privacy audit (tree and full history)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -59,12 +59,12 @@ jobs:
     name: Secret scanning
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # Catches credential shapes the privacy audit does not enumerate, and
       # covers the whole history including blobs that were never in a tree.
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Fail the job rather than only annotating: a leaked token in a
