@@ -7,11 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.1.0] - 2026-10-01
+
+First public release. Everything below is new; there is no prior version to
+differentiate from.
+
+This release also carries the Android client and optional LAN access,
+both developed after the 0.1.0 feature set was assembled and before it was
+tagged.
+
 ### Added
 
-**Android app** — a native client for the phone, in `android/`. Kotlin and
-Jetpack Compose, no dependency-injection framework, and no second player: it
-drives the same server and therefore the same MPD as the browser and ncmpcpp.
+**Android app** — a native client for the phone, in its own repository
+(`Grenoullie91/streambridge-android`; see `docs/android.md`). Kotlin and Jetpack
+Compose, no dependency-injection framework, and no second player: it drives the
+same server and therefore the same MPD as the browser and ncmpcpp.
 
 - Home, Search, Player, Queue and Favourites, plus a Settings screen and an
   offline state that names the four things that are actually wrong.
@@ -42,35 +54,6 @@ drives the same server and therefore the same MPD as the browser and ncmpcpp.
   it also works from a browser on the network.
 - Documented in `docs/security.md`, with the firewall rule, in
   `docs/android.md`.
-
-### Changed
-
-- The launcher icon, the status-bar icon and the browser favicon are now
-  generated from one source image, so the Android app and the web interface
-  cannot drift apart. Same URLs, same content types, new artwork.
-- `STREAMBRIDGE_ALLOW_LAN` accepts `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`
-  from the environment. It previously required a real boolean, which no
-  environment variable can be, so the documented way to enable LAN access from
-  a systemd unit did not work.
-
-### Fixed
-
-- A response that stalled partway through was reported as a raw socket
-  exception instead of a typed timeout, because the body was read outside the
-  try block. The app could only say "something went wrong" for it.
-- A malformed track id is now refused in the client before a path is built
-  from it. OkHttp resolves `..` segments while canonicalising a URL, so an
-  unchecked id could send a request to a different endpoint on the same
-  server.
-- The search results header was drawn underneath the first result rather than
-  above it.
-
-## [0.1.0] - Unreleased
-
-First public release. Everything below is new; there is no prior version to
-differentiate from.
-
-### Added
 
 **Web interface**
 
@@ -130,6 +113,28 @@ differentiate from.
   history* for personal data and secrets.
 - `scripts/security-audit.sh` asserts the project's security invariants
   directly, so a later change cannot quietly remove one.
+
+### Changed
+
+- The launcher icon, the status-bar icon and the browser favicon are now
+  generated from one source image, so the Android app and the web interface
+  cannot drift apart. Same URLs, same content types, new artwork.
+- `STREAMBRIDGE_ALLOW_LAN` accepts `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`
+  from the environment. It previously required a real boolean, which no
+  environment variable can be, so the documented way to enable LAN access from
+  a systemd unit did not work.
+
+### Fixed
+
+- A response that stalled partway through was reported as a raw socket
+  exception instead of a typed timeout, because the body was read outside the
+  try block. The app could only say "something went wrong" for it.
+- A malformed track id is now refused in the client before a path is built
+  from it. OkHttp resolves `..` segments while canonicalising a URL, so an
+  unchecked id could send a request to a different endpoint on the same
+  server.
+- The search results header was drawn underneath the first result rather than
+  above it.
 
 ### Security
 
